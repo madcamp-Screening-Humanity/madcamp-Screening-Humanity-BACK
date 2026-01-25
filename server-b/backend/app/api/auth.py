@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import create_access_token
 from app.models.user import User
+from app.api.deps import get_current_user
 import uuid
 
 router = APIRouter()
@@ -55,19 +56,47 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
     # Create JWT
     access_token = create_access_token(subject=user.id)
     
-    # Ideally, redirection to frontend would happen here with token in params
-    # For now, we return the token directly (REST API style)
-    # return {
-    #     "access_token": access_token, 
-    #     "token_type": "bearer",
-    #     "user": {
-    #         "email": user.email,
-    #         "name": user.username,
-    #         "picture": user.picture
-    #     }
-    # }
+    # Redirect to Frontend with JWT in HttpOnly Cookie
+    frontend_url = settings.FRONTEND_URL or "http://localhost:3000"
+    redirect_url = f"{frontend_url}/auth/callback"
     
-    # Or Redirect to Frontend (assuming localhost:3000 for React)
-    # This is safer for browser flows.
-    frontend_url = "http://localhost:3000/auth/callback"
-    return RedirectResponse(url=f"{frontend_url}?token={access_token}")
+    response = RedirectResponse(url=redirect_url)
+    # Set HttpOnly Cookie for JWT token
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=False,  # HTTPS 환경에서는 True로 변경
+        samesite="lax",
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        path="/"
+    )
+    return response
+
+@router.get("/me")
+async def get_current_user_info(
+    current_user: User = Depends(get_current_user)
+):
+    """현재 로그인한 사용자 정보 조회"""
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "username": current_user.username,
+        "picture": current_user.picture,
+        "provider": current_user.provider,
+    }
+
+@router.post("/logout")
+async def logout():
+    """로그아웃 - 쿠키에서 토큰 삭제"""
+    frontend_url = settings.FRONTEND_URL or "http://localhost:3000"
+    redirect_url = f"{frontend_url}/"
+    
+    response = RedirectResponse(url=redirect_url)
+    # 쿠키 삭제
+    response.delete_cookie(
+        key="access_token",
+        path="/",
+        samesite="lax"
+    )
+    return response

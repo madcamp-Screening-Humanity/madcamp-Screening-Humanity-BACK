@@ -1,4 +1,4 @@
-from typing import List, Union
+from typing import List, Union, Optional
 from pydantic import AnyHttpUrl, validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -30,9 +30,32 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/auth/google/callback"
+    
+    # Frontend URL (OAuth 콜백 리다이렉트용)
+    FRONTEND_URL: str = "http://localhost:3000"
 
-    # External Services (Server A)
-    GPU_SERVER_URL: str = "http://localhost:8001" 
+    # LLM 서비스 설정
+    # "vllm" 또는 "ollama" 중 선택 (동시 실행 불가, VRAM 제약)
+    # 현재 기본값: ollama (vLLM 코드는 주석 처리되어 있음)
+    LLM_SERVICE: str = "ollama"
+    
+    # vLLM API 설정 (OpenAI 호환)
+    # 엔드포인트: /v1/chat/completions
+    # NPM 프록시 예시: https://llm.server-a.local
+    # 직접 접근 예시: http://server-a:8002
+    VLLM_BASE_URL: str = "http://localhost:8002"  # vLLM 서비스 기본 URL (포트 8002)
+    
+    # Ollama API 설정
+    # 엔드포인트: /api/chat
+    # NPM 프록시 예시: https://ollama.server-a.local
+    # 직접 접근 예시: http://server-a:11434
+    OLLAMA_BASE_URL: str = "http://localhost:11434"  # Ollama 서비스 기본 URL (포트 11434)
+    
+    # GPT-SoVITS TTS API 설정
+    # 엔드포인트: /tts (POST/GET)
+    # NPM 프록시 예시: https://tts.server-a.local
+    # 직접 접근 예시: http://server-a:9880
+    TTS_BASE_URL: str = "http://localhost:9880"  # GPT-SoVITS TTS 서비스 기본 URL (포트 9880, api_v2.py)
     
     # Paths (Configurable for Windows/Ubuntu)
     SHARED_MODELS_DIR: str = "/mnt/shared_models"
