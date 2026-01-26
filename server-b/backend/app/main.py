@@ -60,6 +60,9 @@ app.include_router(ai.router, prefix=f"{settings.API_V1_STR}/ai", tags=["ai"])
 from app.api import characters
 app.include_router(characters.router, prefix=f"{settings.API_V1_STR}", tags=["characters"])
 
+# 레거시 경로 호환성 추가
+app.include_router(ai.router, prefix=f"{settings.API_V1_STR}", tags=["legacy"])
+
 @app.get("/")
 async def root():
     return {"message": "Avatar Forge Backend Running"}
