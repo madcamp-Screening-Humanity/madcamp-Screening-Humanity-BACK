@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_db
 from app.models.user import User
 from app.models.generation import GenerationJob
 from app.core.config import settings
@@ -76,16 +76,13 @@ async def process_generation_task(job_id: str, input_path: str, db_session: Asyn
 async def create_generation_job(
     background_tasks: BackgroundTasks,
     image: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: AsyncSession = Depends(get_db)
 ):
-    """Start implicit async generation job"""
+    """Start implicit async generation job (인증 없이 사용 가능)"""
     job_id = str(uuid.uuid4())
     
     # Save Upload
-    # Determine save path (e.g. /tmp or NFS input dir)
     input_filename = f"{job_id}_input.png"
-    # Ensure local valid path for windows dev
     upload_dir = "./uploads"
     os.makedirs(upload_dir, exist_ok=True)
     input_path = os.path.join(upload_dir, input_filename)
@@ -93,10 +90,10 @@ async def create_generation_job(
     with open(input_path, "wb") as buffer:
         shutil.copyfileobj(image.file, buffer)
         
-    # Create Job Entry
+    # Create Job Entry (익명 사용자)
     job = GenerationJob(
         id=job_id,
-        user_id=current_user.id,
+        user_id="anonymous",  # 인증 없이 사용
         job_type="3d",
         status="pending",
         input_payload=json.dumps({"image_path": input_path})

@@ -1,0 +1,13 @@
+{
+  "default_voice_id": "default",
+  "voices": [
+    {
+      "id": "default",
+      "name": "기본 음성",
+      "language": "ko",
+      "ref_audio_path": "/opt/GPT-SoVITS/ref_audio/default.wav",
+      "prompt_text": "",
+      "description": "기본 한국어 음성"
+    }
+  ]
+}

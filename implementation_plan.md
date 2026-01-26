@@ -1,50 +1,48 @@
-# Server B (FastAPI Backend) Implementation Plan
+# 구현 계획: Screening Humanity 대규모 업데이트
 
-## 목표
-- FastAPI 기반의 메인 백엔드 서버 (Server B) 구축
-- Google OAuth2 로그인 구현 (비동기)
-- 비동기 작업 처리 (Async Job Queue 패턴)
-- PostgreSQL 데이터베이스 연동
-- Server A (GPU 서버) 통신 구조 마련
+## 1. 개요
+현재의 캐릭터 선택/생성 흐름을 개선하고, 배경 선택 단계를 삭제하며, AI를 통한 상황 분석 및 채팅 시스템을 고도화합니다. 내 캐릭터 관리(CRUD) 기능도 추가됩니다.
 
-## 구현 단계
+## 2. 상세 구현 단계
 
-### Phase 1: 프로젝트 초기화 및 환경 설정
-- [ ] `server-b/backend` 디렉토리 구조 생성
-- [ ] `requirements.txt` 작성 (FastAPI, SQLAlchemy, Pydantic, httpx, fastapi-sso 등)
-- [ ] `.env` 설정 관리 (환경 변수 분리)
-- [ ] PostgreSQL/SQLite DB 연동 설정 (개발용 SQLite 지원)
+### Phase 1: 백엔드 AI 기능 고도화
+- [ ] **상황 분석 API 구현 (`/api/generate/story`)**:
+    - 사용자가 입력한 짧은 상황 문장(situation)을 받아서 LLM(Ollama/OpenAI)에게 전달.
+    - "드라마틱하고 구체적인 줄거리로 변환해줘"라는 프롬프트와 함께 요청.
+    - 결과물 반환.
+- [ ] **캐릭터 자동 생성 API 구현 (`/api/characters/generate`)**:
+    - 이름과 짧은 설명을 입력받아 페르소나, 말투, 성격 등을 AI가 자동 생성해주는 엔드포인트.
+- [ ] **채팅 시스템 프롬프트 강화 (`/api/chat`)**:
+    - `format_persona_for_roleplay` 함수를 수정하여 AI가 생성한 줄거리를 시스템 프롬프트의 핵심 상황으로 주입.
+    - AI가 첫 마디(Greeting)를 상황에 맞게 건네도록 보완.
 
-### Phase 2: 데이터베이스 모델링
-- [ ] User 모델 (Google Login 정보 포함)
-- [ ] Character 모델
-- [ ] ChatSession 및 Message 모델
-- [ ] GenerationJob 모델 (비동기 작업 추적용)
+### Phase 2: 백엔드 캐릭터 CRUD 및 인증 연동
+- [ ] **`characters` API 수정**:
+    - `create_character` 시 `get_current_user`를 사용하여 `user_id` 자동 저장.
+    - `list_user_characters` 시 본인이 생성한 캐릭터만 보이도록 필터링.
+    - `update_character`, `delete_character` 시 본인 소유 확인 로직 추가.
 
-### Phase 3: 인증 시스템 (Google Login)
-- [ ] `fastapi-sso`를 이용한 Google OAuth2 구현
-- [ ] 로그인/회원가입 로직 (첫 로그인 시 자동 가입)
-- [ ] JWT 토큰 발급 및 검증 미들웨어/의존성 구현
-- [ ] 보호된 라우트 생성 테스트
+### Phase 3: 프론트엔드 UI/UX 개편
+- [ ] **캐릭터 선택 페이지 수정**:
+    - 캐릭터 클릭 시 Global State(Zustand 등)에 캐릭터 정보 저장.
+    - 배경 선택 단계를 건너뛰고 바로 `상황 설정` 페이지로 `router.push`.
+- [ ] **배경 선택 단계 삭제**:
+    - `/steps/background` 관련 컴포넌트 및 파일을 삭제하거나 접근을 제한.
+    - 네비게이션 흐름에서 제거.
+- [ ] **나만의 캐릭터 만들기 UX 변경**:
+    - 'AI 자동 생성' 버튼 제거.
+    - 기본 정보 입력 후 '다음' 클릭 시 로딩 처리를 하며 `/api/characters/generate` 호출.
+    - 반환된 값을 폼에 채운 뒤 최종 저장.
 
-### Phase 4: 비동기 작업 시스템 (Async Processing)
-- [ ] `generate` API 구현 (Immediate Response with Job ID)
-- [ ] `BackgroundTasks`를 이용한 비동기 로직 처리
-- [ ] 상태 조회 (`polling`) API 구현
-- [ ] (Mock) Server A로의 비동기 요청 시뮬레이션
+### Phase 4: 채팅 시스템 및 내 캐릭터 관리 UI
+- [ ] **채팅 시작 로직 연동**:
+    - '대화 시작하기' 클릭 시 백엔드로 상황 데이터 전송.
+    - AI 답변 수신 시 설정된 상황이 잘 반영되었는지 확인.
+- [ ] **내 캐릭터 목록 화면 구현**:
+    - 내가 만든 캐릭터 목록 표시.
+    - 수정 및 삭제 버튼 추가 및 백엔드 연동.
 
-### Phase 5: API 엔드포인트 구현 (핵심 기능)
-- [ ] Chat API (LLM 연동용, 비동기)
-- [ ] TTS API (연동용)
-- [ ] File/Asset Serving API (NFS/Local path)
-
-### Phase 6: 테스트 및 검증
-- [ ] 로컬 실행 스크립트 작성 (`run.bat` / `run.sh`)
-- [ ] API 문서 (Swagger UI) 확인
-
-## 기술 스택
-- Language: Python 3.10+
-- Framework: FastAPI
-- DB: PostgreSQL (Production) / SQLite (Dev)
-- ORM: SQLAlchemy (Async supported)
-- Auth: Google OAuth2 (via fastapi-sso), JWT
+## 3. 기술적 변경 사항
+- **LLM Prompting**: 상황 분석 및 캐릭터 상세 설정 생성을 위한 시스템 프롬프트 설계.
+- **State Management**: 프론트엔드에서 선택된 캐릭터와 생성된 줄거리를 효율적으로 전달하기 위한 Store 구조 변경.
+- **Auth**: 모든 개인화 기능(캐릭터 저장, 조회)에 JWT 인증 의존성 주입.
