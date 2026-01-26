@@ -31,12 +31,13 @@ logger = logging.getLogger(__name__)
 
 # 개발 환경에서 모든 localhost origin 허용 (간단화된 설정)
 # allow_credentials=False로 설정하여 모든 origin 허용 가능
+# CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 모든 origin 허용 (개발 환경)
-    allow_credentials=False,  # credentials 비활성화 (모든 origin 허용을 위해)
-    allow_methods=["*"],  # 모든 HTTP 메소드 허용
-    allow_headers=["*"],  # 모든 헤더 허용
+    allow_origins=[str(origin).rstrip("/") for origin in settings.BACKEND_CORS_ORIGINS] or ["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
     expose_headers=["*"],
     max_age=3600,
 )
@@ -52,6 +53,9 @@ app.include_router(chat.router, prefix=f"{settings.API_V1_STR}", tags=["chat"])
 
 from app.api import tts
 app.include_router(tts.router, prefix=f"{settings.API_V1_STR}", tags=["tts"])
+
+from app.api import ai
+app.include_router(ai.router, prefix=f"{settings.API_V1_STR}/ai", tags=["ai"])
 
 from app.api import characters
 app.include_router(characters.router, prefix=f"{settings.API_V1_STR}", tags=["characters"])

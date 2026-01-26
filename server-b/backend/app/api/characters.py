@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from app.core.config import settings
-from app.api.deps import get_db
+from app.api.deps import get_db, get_current_user
 from app.models.user import User
 from app.models.generation import Character
 
@@ -102,12 +102,14 @@ async def list_preset_characters():
 
 @router.get("/characters")
 async def list_user_characters(
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    """사용자가 생성한 캐릭터 목록 조회 (인증 없음)"""
+    """현재 사용자가 생성한 캐릭터 목록 조회"""
     try:
         result = await db.execute(
             select(Character).where(
+                Character.user_id == current_user.id,
                 Character.is_preset == False
             ).order_by(Character.created_at.desc())
         )
@@ -146,16 +148,17 @@ async def list_user_characters(
 @router.post("/characters")
 async def create_character(
     character: CharacterCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    """나만의 캐릭터 생성 (인증 없음)"""
+    """나만의 캐릭터 생성"""
     try:
         # 태그를 JSON 문자열로 변환
         tags_json = json.dumps(character.tags) if character.tags else None
         
-        # Character 모델 생성 (익명 사용자)
+        # Character 모델 생성
         db_character = Character(
-            user_id="anonymous",
+            user_id=current_user.id,
             name=character.name,
             description=character.description,
             persona=character.persona,
@@ -259,9 +262,10 @@ async def get_character(
 async def update_character(
     character_id: str,
     character_update: CharacterUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    """캐릭터 수정 (인증 없음)"""
+    """캐릭터 수정 (본인 소유 확인)"""
     try:
         # 사전설정 캐릭터는 수정 불가
         preset_chars = load_preset_characters()
@@ -282,6 +286,13 @@ async def update_character(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="캐릭터를 찾을 수 없습니다"
+            )
+            
+        # 소유권 확인
+        if character.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="캐릭터를 수정할 권한이 없습니다"
             )
         
         # 필드 업데이트
@@ -325,9 +336,10 @@ async def update_character(
 @router.delete("/characters/{character_id}")
 async def delete_character(
     character_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    """캐릭터 삭제 (인증 없음)"""
+    """캐릭터 삭제 (본인 소유 확인)"""
     try:
         # 사전설정 캐릭터는 삭제 불가
         preset_chars = load_preset_characters()
@@ -348,6 +360,13 @@ async def delete_character(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="캐릭터를 찾을 수 없습니다"
+            )
+            
+        # 소유권 확인
+        if character.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="캐릭터를 삭제할 권한이 없습니다"
             )
         
         await db.execute(delete(Character).where(Character.id == character_id))
