@@ -13,3 +13,4 @@ fastapi-sso==0.10.0
 python-dotenv==1.0.1
 aiofiles==23.2.1
 aiosqlite==0.20.0
+mutagen==1.47.0

@@ -12,7 +12,7 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         # Create tables
         # Import models so they are registered
-        from app.models import user, generation
+        from app.models import user, generation, audio
         await conn.run_sync(Base.metadata.create_all)
     yield
     # Shutdown
@@ -40,6 +40,9 @@ app.include_router(generate.router, prefix=f"{settings.API_V1_STR}", tags=["gene
 
 from app.api import chat
 app.include_router(chat.router, prefix=f"{settings.API_V1_STR}", tags=["chat"])
+
+from app.api import tts
+app.include_router(tts.router, prefix=f"{settings.API_V1_STR}", tags=["tts"])
 
 @app.get("/")
 async def root():

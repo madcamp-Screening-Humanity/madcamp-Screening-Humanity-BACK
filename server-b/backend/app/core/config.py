@@ -55,7 +55,12 @@ class Settings(BaseSettings):
     # 엔드포인트: /tts (POST/GET)
     # NPM 프록시 예시: https://tts.server-a.local
     # 직접 접근 예시: http://server-a:9880
-    TTS_BASE_URL: str = "http://localhost:9880"  # GPT-SoVITS TTS 서비스 기본 URL (포트 9880, api_v2.py)
+    TTS_BASE_URL: str = "http://gpusovitsapi.duckdns.org"  # GPT-SoVITS TTS 서비스 기본 URL (포트 9880, api_v2.py)
+    TTS_API_PATH: str = "tts"  # TTS API 경로 (프록시 경로 포함 가능, 예: "tts/tts")
+    TTS_TIMEOUT: float = 120.0  # TTS API 호출 타임아웃 (초)
+    TTS_MAX_TEXT_LENGTH: int = 10000  # 텍스트 길이 제한 (자)
+    TTS_MAX_FILE_SIZE: int = 52428800  # 생성된 오디오 파일 크기 제한 (바이트, 기본 50MB)
+    TTS_SSL_VERIFY: bool = False  # SSL 인증서 검증 (개발 환경: False, 프로덕션: True)
     
     # Paths (Configurable for Windows/Ubuntu)
     SHARED_MODELS_DIR: str = "/mnt/shared_models"
