@@ -15,6 +15,7 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[Message]
     persona: Optional[str] = None
+    scenario: Optional[str] = None
     temperature: float = 0.7
     max_tokens: int = 512
     model: str = "gpt-oss-20b"
@@ -26,7 +27,24 @@ async def chat(
 ):
     """
     Proxy chat request to Server A (LLM Service).
+    Injects persona and scenario into system prompt.
     """
+    # System Prompt Injection
+    system_content = []
+    if request.persona:
+        system_content.append(f"당신의 페르소나:\n{request.persona}")
+    if request.scenario:
+        system_content.append(f"현재 상황/줄거리:\n{request.scenario}")
+    
+    if system_content:
+        full_system_prompt = "\n\n".join(system_content)
+        # Check if first message is already system
+        if request.messages and request.messages[0].role == "system":
+            request.messages[0].content = f"{full_system_prompt}\n\n{request.messages[0].content}"
+        else:
+            request.messages.insert(0, Message(role="system", content=full_system_prompt))
+
+    # In real deployment, this URL points to Server A
     # In real deployment, this URL points to Server A
     llm_service_url = f"{settings.GPU_SERVER_URL.replace('8001', '8002')}/chat" # Assuming port mapping logic or config
     

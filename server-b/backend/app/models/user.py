@@ -1,6 +1,7 @@
 from sqlalchemy import Column, String, DateTime, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 import uuid
 from app.core.database import Base
 
@@ -19,3 +20,6 @@ class User(Base):
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationship to characters
+    characters = relationship("Character", back_populates="user", cascade="all, delete-orphan")

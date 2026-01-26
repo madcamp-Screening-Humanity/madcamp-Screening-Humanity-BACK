@@ -72,7 +72,7 @@ async def process_generation_task(job_id: str, input_path: str, db_session: Asyn
             await db.commit()
 
 
-@router.post("/generate")
+@router.post("/")
 async def create_generation_job(
     background_tasks: BackgroundTasks,
     image: UploadFile = File(...),

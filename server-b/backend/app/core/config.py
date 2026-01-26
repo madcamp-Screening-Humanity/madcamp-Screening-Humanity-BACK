@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api"
     
     # CORS
-    BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
+    BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = ["http://localhost:3000"]
 
     @validator("BACKEND_CORS_ORIGINS", pre=True)
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/auth/google/callback"
+    
+    # AI API Keys
+    GEMINI_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
 
     # External Services (Server A)
     GPU_SERVER_URL: str = "http://localhost:8001" 
