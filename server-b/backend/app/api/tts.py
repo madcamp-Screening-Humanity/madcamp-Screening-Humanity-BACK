@@ -14,7 +14,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.config import settings
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_db
 from app.models.user import User
 from app.models.audio import AudioFile
 from app.services.audio_analyzer import AudioAnalyzer
@@ -141,18 +141,26 @@ class TTSRequest(BaseModel):
         return data
 
 
-@router.post("/tts")
-async def synthesize(
+async def _synthesize_tts_internal(
     request: TTSRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
+    current_user: User,
+    db: AsyncSession
+) -> Dict[str, Any]:
     """
-    텍스트를 음성으로 변환합니다.
+    TTS 합성 내부 함수 (다른 모듈에서 직접 호출 가능)
     
-    - voice_id를 사용하면 설정 파일에서 ref_audio_path를 자동 매핑합니다.
-    - ref_audio_path를 직접 지정하면 해당 경로를 사용합니다 (임시 사용, 저장 안 함).
-    - return_binary=true면 오디오 바이너리를 직접 반환하고, false면 파일 저장 후 JSON 반환합니다.
+    Args:
+        request: TTS 요청 (return_binary는 False여야 함)
+        current_user: 현재 사용자
+        db: 데이터베이스 세션
+    
+    Returns:
+        성공 시: {"success": True, "data": {...}}
+        실패 시: HTTPException 발생
+    
+    Note:
+        - return_binary=True는 지원하지 않음 (HTTP 엔드포인트에서만 처리)
+        - voice_id를 사용하면 설정 파일에서 ref_audio_path를 자동 매핑
     """
     try:
         # 텍스트 해시 생성 (캐싱용)
@@ -220,21 +228,12 @@ async def synthesize(
                     detail=f"생성된 오디오 파일 크기가 제한을 초과했습니다 (최대 {max_file_size}바이트)"
                 )
             
-            # return_binary가 True면 바이너리 직접 반환
+            # return_binary가 True면 바이너리 직접 반환 (HTTP 엔드포인트에서만 사용)
+            # 내부 함수에서는 항상 JSON 반환
             if request.return_binary:
-                media_type_map = {
-                    "wav": "audio/wav",
-                    "ogg": "audio/ogg",
-                    "aac": "audio/aac",
-                    "raw": "audio/raw"
-                }
-                return Response(
-                    content=audio_content,
-                    media_type=media_type_map.get(request.media_type, "audio/wav"),
-                    headers={
-                        "Content-Disposition": f"attachment; filename=tts_output.{request.media_type}"
-                    }
-                )
+                # 내부 함수에서는 return_binary=True를 지원하지 않음
+                # HTTP 엔드포인트에서만 처리
+                raise ValueError("내부 함수에서는 return_binary=True를 지원하지 않습니다. HTTP 엔드포인트를 사용하세요.")
             
             # 파일 저장
             file_id = str(uuid.uuid4())
@@ -323,10 +322,67 @@ async def synthesize(
         )
 
 
+@router.post("/tts")
+async def synthesize(request: TTSRequest):
+    """
+    텍스트를 음성으로 변환합니다 (인증 없이 사용 가능).
+    GPT-SoVITS API를 직접 호출하여 오디오를 생성합니다.
+    """
+    try:
+        # GPT-SoVITS API 호출 준비
+        gpt_sovits_request = request.model_dump_for_gpt_sovits()
+        
+        # TTS API URL 구성
+        tts_base_url = settings.TTS_BASE_URL.rstrip("/")
+        tts_api_path = settings.TTS_API_PATH.lstrip("/")
+        tts_url = f"{tts_base_url}/{tts_api_path}"
+        
+        # Server A GPT-SoVITS API 호출
+        async with httpx.AsyncClient(verify=settings.TTS_SSL_VERIFY, timeout=settings.TTS_TIMEOUT) as client:
+            response = await client.post(tts_url, json=gpt_sovits_request)
+            response.raise_for_status()
+            audio_content = response.content
+        
+        # return_binary=True면 오디오 바이너리 직접 반환
+        if request.return_binary:
+            media_type_map = {
+                "wav": "audio/wav",
+                "ogg": "audio/ogg",
+                "aac": "audio/aac",
+                "raw": "audio/raw"
+            }
+            return Response(
+                content=audio_content,
+                media_type=media_type_map.get(request.media_type, "audio/wav"),
+                headers={"Content-Disposition": f"attachment; filename=tts_output.{request.media_type}"}
+            )
+        
+        # JSON 응답 (바이너리 저장 없이 base64로 반환)
+        import base64
+        audio_base64 = base64.b64encode(audio_content).decode("utf-8")
+        return {
+            "success": True,
+            "data": {
+                "audio_base64": audio_base64,
+                "format": request.media_type,
+                "voice_id": request.voice_id or "default"
+            }
+        }
+        
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"TTS 서비스 오류: {e.response.status_code}")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="TTS 서비스 응답 시간 초과")
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail=f"TTS 서비스 연결 실패 (URL: {tts_url})")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"TTS 요청 오류: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"TTS 합성 오류: {str(e)}")
+
+
 @router.get("/tts/voices")
-async def list_voices(
-    current_user: User = Depends(get_current_user)
-):
+async def list_voices():
     """
     사용 가능한 음성 목록을 조회합니다.
     현재는 Mock 응답을 반환합니다. (나중에 실제 구현 예정)
