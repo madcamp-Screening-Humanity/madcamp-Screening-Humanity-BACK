@@ -117,7 +117,6 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[Message]
     persona: Optional[str] = None
-    scenario: Optional[str] = None
     temperature: float = 0.7
     max_tokens: int = 800  # 한 턴만 말하므로 적절히 조정
     model: str = "gemma-3-27b-it"
@@ -135,35 +134,8 @@ class ChatRequest(BaseModel):
 @router.post("/chat")
 async def chat(request: ChatRequest):
     """
-<<<<<<< HEAD
     배우 모드: AI가 한 캐릭터로서 한 턴만 응답
     감독 모드: 두 캐릭터가 교대로 응답
-=======
-<<<<<<< HEAD
-    Proxy chat request to Server A (LLM Service).
-    Injects persona and scenario into system prompt.
-    """
-    # System Prompt Injection
-    system_content = []
-    if request.persona:
-        system_content.append(f"당신의 페르소나:\n{request.persona}")
-    if request.scenario:
-        system_content.append(f"현재 상황/줄거리:\n{request.scenario}")
-    
-    if system_content:
-        full_system_prompt = "\n\n".join(system_content)
-        # Check if first message is already system
-        if request.messages and request.messages[0].role == "system":
-            request.messages[0].content = f"{full_system_prompt}\n\n{request.messages[0].content}"
-        else:
-            request.messages.insert(0, Message(role="system", content=full_system_prompt))
-
-    # In real deployment, this URL points to Server A
-    # In real deployment, this URL points to Server A
-    llm_service_url = f"{settings.GPU_SERVER_URL.replace('8001', '8002')}/chat" # Assuming port mapping logic or config
-=======
-    Ollama 서비스를 사용하여 실제 LLM API를 호출합니다.
->>>>>>> 8e273b29cb9b6a7443e5e215309d9f5056af1ec9
     """
     session_id = request.session_id or str(uuid.uuid4())
     
@@ -259,7 +231,6 @@ async def chat(request: ChatRequest):
     for msg in request_messages:
         role = "assistant" if msg["role"] == "ai" else msg["role"]
         messages.append({"role": role, "content": msg["content"]})
->>>>>>> 6fe448cb8225155864a351628994e82378c14e33
     
     try:
         # LLM 호출
