@@ -9,6 +9,7 @@ from app.api.deps import get_db
 from app.models.user import User
 from app.models.character import Character
 from app.core.llm import call_llm
+from app.services.context_manager import context_manager
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -21,7 +22,8 @@ def format_persona_for_actor(
     partner_name: str,
     situation: str,
     turn_count: int = 0,
-    director_note: Optional[str] = None
+    director_note: Optional[str] = None,
+    summary: Optional[str] = None
 ) -> str:
     """
     AI가 '작가'가 아닌 '배우'로서 한 턴만 말하도록 강제하는 프롬프트
@@ -64,6 +66,8 @@ def format_persona_for_actor(
     
     # [5] 현재 상황
     parts.append(f"\n[현재 상황]")
+    if summary:
+        parts.append(f"[지난 줄거리 요약: {summary}]")
     parts.append(f"{situation}")
     
     # [6] 캐릭터 페르소나
@@ -132,12 +136,13 @@ class ChatRequest(BaseModel):
     tts_streaming_mode: int = 0
 
 @router.post("/chat")
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
     """
     배우 모드: AI가 한 캐릭터로서 한 턴만 응답
     감독 모드: 두 캐릭터가 교대로 응답
     """
     session_id = request.session_id or str(uuid.uuid4())
+    summary = await context_manager.get_summary(session_id, db)
     
     # 시나리오 정보 추출
     scenario = request.scenario or {}
@@ -197,7 +202,8 @@ async def chat(request: ChatRequest):
                 partner_name=partner_name,
                 situation=situation,
                 turn_count=turn_count,
-                director_note=request.director_note
+                director_note=request.director_note,
+                summary=summary
             )
             
             messages.append({"role": "system", "content": system_prompt})
@@ -216,7 +222,8 @@ async def chat(request: ChatRequest):
                 partner_name=user_name,
                 situation=situation,
                 turn_count=turn_count,
-                director_note=request.director_note
+                director_note=request.director_note,
+                summary=summary
             )
             messages.append({"role": "system", "content": system_prompt})
     

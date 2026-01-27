@@ -14,7 +14,7 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         # Create tables
         # Import models so they are registered
-        from app.models import user, generation, character, audio
+        from app.models import user, generation, character, audio, summary
         await conn.run_sync(Base.metadata.create_all)
     yield
     # Shutdown
@@ -48,9 +48,10 @@ logger.info("CORS 설정: 모든 origin 허용 (개발 환경)")
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["auth"])
 app.include_router(generate.router, prefix=f"{settings.API_V1_STR}/generate", tags=["generate"])
 
-from app.api import chat, characters, story
+from app.api import chat, characters, story, evaluation
 app.include_router(characters.router, prefix=f"{settings.API_V1_STR}/characters", tags=["characters"])
 app.include_router(story.router, prefix=f"{settings.API_V1_STR}/story", tags=["story"])
+app.include_router(evaluation.router, prefix=f"{settings.API_V1_STR}/evaluation", tags=["evaluation"])
 app.include_router(chat.router, prefix=f"{settings.API_V1_STR}", tags=["chat"])
 
 from app.api import tts
