@@ -1,7 +1,11 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from app.core.llm import call_llm
 import json
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.api.deps import get_db, get_current_user
+from app.models.user import User
+from app.models.scenario import Scenario
 
 router = APIRouter()
 
@@ -11,11 +15,16 @@ class StoryGenerationRequest(BaseModel):
     situation: str
 
 @router.post("/generate/story")
-async def generate_story(request: StoryGenerationRequest):
+async def generate_story(
+    request: StoryGenerationRequest,
+    db: AsyncSession = Depends(get_db), # DB 세션 주입
+    current_user: User = Depends(get_current_user) # 사용자 정보 주입
+):
     """
     [기능] 
     1. 상황 키워드를 바탕으로 'UI 표시용 1줄 요약' 생성
     2. AI가 연기할 '구체적인 상황 배경' 생성
+    3. 생성된 시나리오를 DB에 저장
     """
     
     system_prompt = f"""
@@ -56,16 +65,35 @@ async def generate_story(request: StoryGenerationRequest):
             
         data = json.loads(content)
         
+        summary_text = data.get("summary", request.situation)
+        background_text = data.get("background", request.situation)
+
+        # DB 저장
+        new_scenario = Scenario(
+            user_id=current_user.id,
+            user_name=request.user_name,
+            character_name=request.character_name,
+            situation=request.situation,
+            summary=summary_text,
+            background=background_text
+        )
+        db.add(new_scenario)
+        await db.commit()
+        await db.refresh(new_scenario)
+
         return {
             "success": True,
             "data": {
-                "summary": data.get("summary", request.situation),
-                "background": data.get("background", request.situation)
+                "scenario_id": new_scenario.id, # ID 반환 추가
+                "summary": summary_text,
+                "background": background_text
             }
         }
 
     except Exception as e:
         print(f"Story Gen Error: {e}")
+        # 실패 시에도 기본값으로라도 저장 시도? 아니면 저장 안함.
+        # 에러 발생 시 저장을 못하므로 그냥 리턴
         return {
             "success": True,
             "data": {

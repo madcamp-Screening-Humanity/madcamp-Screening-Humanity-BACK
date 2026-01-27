@@ -133,7 +133,6 @@ async def lifespan(app: FastAPI):
 | `is_preset` | Boolean | NOT NULL, DEFAULT=False | 사전설정 캐릭터 여부 |
 | `category` | String(50) | NULLABLE | 카테고리 (애니메이션, 소설, 영화 등) |
 | `tags` | Text | NULLABLE | 태그 목록 (JSON 문자열) |
-| `sample_dialogue` | Text | NULLABLE | 샘플 대화 텍스트 |
 | `image_url` | String(255) | NULLABLE | 이미지 URL (로컬 assets 경로) |
 | `model_url` | String(255) | NULLABLE | 3D 모델 GLB 파일 경로 |
 | `thumbnail_url` | String(255) | NULLABLE | 썸네일 이미지 URL |
@@ -344,7 +343,6 @@ CREATE TABLE messages (
 | `is_preset` | 없음 | Boolean, default=False | ➕ 추가 (사전설정 구분) |
 | `category` | 없음 | String(50), nullable | ➕ 추가 (카테고리) |
 | `tags` | 없음 | Text, nullable (JSON) | ➕ 추가 (태그) |
-| `sample_dialogue` | 없음 | Text, nullable | ➕ 추가 (샘플 대화) |
 | `image_url` | 없음 | String(255), nullable | ➕ 추가 (이미지) |
 
 **분석**:
@@ -460,7 +458,6 @@ interface Character {
   voice_id?: string
   category?: string
   tags?: string[]
-  sample_dialogue?: string
   image_url?: string
   is_preset: boolean
   user_id?: string
@@ -521,7 +518,6 @@ erDiagram
         boolean is_preset "NOT NULL"
         string category
         text tags "JSON"
-        text sample_dialogue
         string image_url
         string model_url
         string thumbnail_url
@@ -585,8 +581,8 @@ ALTER TABLE characters
   ADD COLUMN IF NOT EXISTS is_preset BOOLEAN DEFAULT FALSE NOT NULL,
   ADD COLUMN IF NOT EXISTS category VARCHAR(50),
   ADD COLUMN IF NOT EXISTS tags TEXT,
-  ADD COLUMN IF NOT EXISTS sample_dialogue TEXT,
   ADD COLUMN IF NOT EXISTS image_url VARCHAR(255);
+-- sample_dialogue: v1.7에서 DROP (첫 대사 AI 생성으로 대체)
 ```
 
 #### 7.1.3 generation_jobs 테이블 마이그레이션

@@ -23,3 +23,5 @@ class User(Base):
 
     # Relationship to characters
     characters = relationship("Character", back_populates="user", cascade="all, delete-orphan")
+    scenarios = relationship("Scenario", back_populates="user", cascade="all, delete-orphan")
+    voices = relationship("Voice", back_populates="user")

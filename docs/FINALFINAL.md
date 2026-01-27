@@ -81,7 +81,7 @@ lastUpdated: 2026-01-27
    - Frontend ChatRoom 실제 API 연동 (하드코딩된 응답 완전 제거)
    - Frontend TTS 통합 (TTS 설정 모달, 오디오 재생 3가지 모드)
    - 세션 관리 (UUID 자동 생성)
-   - 초기 메시지 API 생성 (sample_dialogue 우선, API 폴백)
+   - 초기 메시지(첫 대사): 첫 대사 AI 생성, sample_dialogue 미사용
    - 에러 처리 개선 (Toast, 재시도 메커니즘)
    - 턴 제한 설정화 (환경 변수 지원)
 
@@ -2944,7 +2944,7 @@ avatar-forge/
   - [x] 실제 API 연동 완료 (하드코딩된 응답 완전 제거) ✅
   - [x] TTS 통합 완료 (TTS 설정 모달, 오디오 재생 3가지 모드) ✅
   - [x] API 호출 시 `session_id` 포함 ✅
-  - [x] 초기 메시지 API 생성 (sample_dialogue 우선, API 폴백) ✅
+  - [x] 초기 메시지(첫 대사): 첫 대사 AI 생성, sample_dialogue 미사용 ✅
   - [x] 에러 처리 개선 (Toast, 재시도 메커니즘) ✅
 - [x] API 경로 통일 ✅
   - [x] Frontend API 경로를 `/api`로 변경 ✅

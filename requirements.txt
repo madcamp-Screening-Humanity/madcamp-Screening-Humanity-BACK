@@ -15,3 +15,6 @@ aiofiles==23.2.1
 aiosqlite==0.20.0
 mutagen==1.47.0
 google-generativeai>=0.3.0
+tiktoken
+redis>=5.0.0
+redis>=5.0.0

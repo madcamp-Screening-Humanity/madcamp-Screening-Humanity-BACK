@@ -1,9 +1,11 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from sqlalchemy import text
 from app.core.config import settings
 from app.core.database import engine, Base
-from app.api import auth, generate
+from app.core.redis import init_redis_pool, close_redis_pool
+from app.api import auth, users, generate
 from contextlib import asynccontextmanager
 import logging
 
@@ -11,13 +13,32 @@ import logging
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    await init_redis_pool()
+    
     async with engine.begin() as conn:
         # Create tables
-        # Import models so they are registered
-        from app.models import user, generation, character, audio, summary, voice
+        from app.models import user, generation, character, audio, summary, voice, scenario, chat_message, user_preference
         await conn.run_sync(Base.metadata.create_all)
+        # 기존 DB: voices에 user_id 컬럼 추가 (이미 있으면 무시)
+        for col, typ in [("user_id", "VARCHAR(36)"), ("train_input_dir", "VARCHAR(500)"), ("training_model_name", "VARCHAR(200)")]:
+            try:
+                await conn.execute(text(f"ALTER TABLE voices ADD COLUMN {col} {typ}"))
+            except Exception as e:
+                if "duplicate column" not in str(e).lower() and "already exists" not in str(e).lower():
+                    raise
+        # user_ref_sounds 테이블 삭제 (drop_only, 없으면 무시)
+        try:
+            await conn.execute(text("DROP TABLE IF EXISTS user_ref_sounds"))
+        except Exception:
+            pass
+        # characters.sample_dialogue 컬럼 제거 (SQLite 3.35+)
+        try:
+            await conn.execute(text("ALTER TABLE characters DROP COLUMN sample_dialogue"))
+        except Exception as e:
+            logging.getLogger("app.main").info("characters.sample_dialogue DROP COLUMN 생략 또는 실패: %s", e)
     yield
     # Shutdown
+    await close_redis_pool()
     await engine.dispose()
 
 app = FastAPI(
@@ -46,10 +67,10 @@ logger.info("CORS 설정: 모든 origin 허용 (개발 환경)")
 
 # Routers
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["auth"])
+app.include_router(users.router, prefix=f"{settings.API_V1_STR}/users", tags=["users"])
 app.include_router(generate.router, prefix=f"{settings.API_V1_STR}/generate", tags=["generate"])
 
 from app.api import chat, characters, story, evaluation
-app.include_router(characters.router, prefix=f"{settings.API_V1_STR}/characters", tags=["characters"])
 app.include_router(story.router, prefix=f"{settings.API_V1_STR}/story", tags=["story"])
 app.include_router(evaluation.router, prefix=f"{settings.API_V1_STR}/evaluation", tags=["evaluation"])
 app.include_router(chat.router, prefix=f"{settings.API_V1_STR}", tags=["chat"])
@@ -65,6 +86,12 @@ app.include_router(ai.router, prefix=f"{settings.API_V1_STR}/ai", tags=["ai"])
 
 from app.api import characters
 app.include_router(characters.router, prefix=f"{settings.API_V1_STR}", tags=["characters"])
+
+from app.api import system
+app.include_router(system.router, prefix=f"{settings.API_V1_STR}/system", tags=["system"])
+
+from app.api import model_make
+app.include_router(model_make.router, prefix=f"{settings.API_V1_STR}/model-make", tags=["model-make"])
 
 # 레거시 경로 호환성 추가
 app.include_router(ai.router, prefix=f"{settings.API_V1_STR}", tags=["legacy"])

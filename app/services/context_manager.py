@@ -1,6 +1,7 @@
 import json
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
+import tiktoken
 from sqlalchemy import select
 from app.core.config import settings
 from app.core.llm import call_llm
@@ -99,6 +100,49 @@ class ContextManager:
         # 3. Memory 저장
         self._memory_store[f"summary:{session_id}"] = summary
 
+    async def manage_context(
+        self,
+        messages: List[Dict],
+        summary: str,
+        session_id: str,
+        db: Optional[AsyncSession],
+        persona: Optional[str],
+        max_turns: int,
+        max_context: int,
+        ratio: float,
+    ) -> Tuple[List[Dict], str, bool]:
+        """
+        턴 기반 슬라이딩 윈도우 + tiktoken 80% 트리거.
+        - messages를 {"role":"assistant"|"user", "content"}로 정규화
+        - total >= max_context*ratio 이면 K_eff 축소 후 슬라이드·요약·save_summary
+        - to_drop이 40개 초과 시 to_drop[-40:]만 요약
+        반환: (windowed_messages, summary, did_summarize)
+        """
+        enc = tiktoken.get_encoding("cl100k_base")
+        # 1. 정규화
+        normalized = [
+            {"role": "assistant" if (m.get("role") == "ai") else m.get("role", "user"), "content": m.get("content", "")}
+            for m in messages
+        ]
+        # 2. 토큰 추정
+        sys_est = 600 + len(enc.encode(persona or "")) + len(enc.encode(summary or ""))
+        total = sys_est + sum(len(enc.encode(m.get("content", ""))) + 10 for m in normalized)
+        # 3. K_eff
+        if total >= max_context * ratio:
+            k_eff = max(2, max_turns // 2)
+        else:
+            k_eff = max_turns
+        k = 2 * k_eff
+        if len(normalized) <= k:
+            return (normalized, summary or "", False)
+        to_drop = normalized[:-k]
+        windowed = normalized[-k:]
+        if len(to_drop) > 40:
+            to_drop = to_drop[-40:]
+        new_summary = await self.summarize_dialogue(to_drop, previous_summary=summary or "")
+        await self.save_summary(session_id, new_summary, db)
+        return (windowed, new_summary, True)
+
     async def summarize_dialogue(self, messages: List[Dict[str, str]], previous_summary: str = "") -> str:
         """
         LLM을 사용한 요약 생성 (기존 로직 유지)
@@ -117,6 +161,7 @@ class ContextManager:
         2. 분량은 3~5문장으로 요약하세요.
         3. '이전 줄거리'의 내용을 포함하여 흐름이 끊기지 않게 하세요.
         4. 제3자 관점(서술형)으로 작성하세요.
+        5. 총 400자 이내로 압축하세요.
         
         [이전 줄거리]
         {previous_summary if previous_summary else "(없음)"}
@@ -129,7 +174,7 @@ class ContextManager:
 
         try:
             result = await call_llm(messages_payload, temperature=0.5, max_tokens=500)
-            summary = result if isinstance(result, str) else result.get("content", "")
+            summary = (result.get("content", "") or "") if isinstance(result, dict) else ""
             return summary.strip()
         except Exception as e:
             print(f"Summarization failed: {e}")

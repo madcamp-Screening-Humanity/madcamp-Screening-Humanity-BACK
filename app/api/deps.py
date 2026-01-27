@@ -56,3 +56,44 @@ async def get_current_user(
         raise credentials_exception
         
     return user
+
+
+async def get_current_user_optional(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+) -> Optional[User]:
+    """
+    현재 사용자 조회. 토큰 없거나 만료/유효하지 않으면 None 반환 (HTTPException 미발생).
+    chat 등 비로그인 허용 엔드포인트에서 사용.
+    """
+    token = await get_token_from_request(request)
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            return None
+    except JWTError:
+        return None
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    return user
+
+
+async def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    """
+    관리자 권한 확인 의존성.
+    ADMIN_EMAILS 환경변수에 등록된 이메일만 관리자로 인정.
+    """
+    if not current_user or not current_user.email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="인증이 필요합니다",
+        )
+    if not settings.is_admin(current_user.email):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="관리자 권한이 필요합니다",
+        )
+    return current_user

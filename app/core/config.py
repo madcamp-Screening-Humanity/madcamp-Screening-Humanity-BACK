@@ -1,5 +1,5 @@
 from typing import List, Union, Optional
-from pydantic import AnyHttpUrl, validator
+from pydantic import AnyHttpUrl, validator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -44,6 +44,19 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
     
+    @validator("GEMINI_API_KEY", pre=True, always=True)
+    def set_gemini_api_key(cls, v, values):
+        import os
+        if v:
+            return v
+        # 여러 환경 변수 이름 시도
+        return (
+            os.getenv("GOOGLE_API_KEY") or 
+            os.getenv("GEMINI_API_KEY") or 
+            os.getenv("NEXT_PUBLIC_GEMINI_API_KEY") or 
+            ""
+        )
+    
     # Frontend URL (OAuth 콜백 리다이렉트용)
     FRONTEND_URL: str = "http://localhost:3000"
 
@@ -65,6 +78,11 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://gpugpt.duckdns.org"  # Ollama 서비스 기본 URL (리버스 프록시 사용)
     OLLAMA_API_PATH: str = "/api/chat"  # Ollama API 경로 (리버스 프록시 경로 포함 가능, 예: "/ollama/api/chat")
     OLLAMA_SSL_VERIFY: bool = False  # SSL 인증서 검증 (개발 환경: False, 프로덕션: True)
+    
+    # 컨텍스트/슬라이딩 윈도우 (GLM-4.7-Flash 31B, 32K context)
+    CONTEXT_WINDOW_TURNS: int = 40  # 1턴=user+assistant 1쌍, 40턴=80개 메시지 (약 20K 토큰 예상)
+    CONTEXT_MAX_TOKENS: int = 32000  # 32K 모델 한계
+    CONTEXT_TOKEN_THRESHOLD_RATIO: float = 0.8  # 80% (25.6K) 초과 시 요약 트리거
     
     # GPT-SoVITS TTS API 설정
     # 엔드포인트: /tts (POST/GET)
@@ -90,11 +108,30 @@ class Settings(BaseSettings):
         return email.lower() in admin_list
     
     # Server A 파일 스캔 API (GPT-SoVITS 모델/음성 파일 조회용)
-    SERVER_A_FILES_API_URL: str = "http://gpusovitsapi.duckdns.org:10001"
+    # 프록시 사용 시 포트 없이 gpufilemanager.duckdns.org, /api/health·/api/files/* 라우팅
+    SERVER_A_FILES_API_URL: str = "http://gpufilemanager.duckdns.org"
+
+    # Server A 학습 API (GPT-SoVITS 모델 학습용). 프록시: gpuvoicetrain.duckdns.org
+    SERVER_A_TRAINING_API_URL: str = "http://gpuvoicetrain.duckdns.org"
+
+    # Server A 경로 (model-make 업로드/삭제용). file_scanner_api·training_api와 동일한 값 사용
+    SERVER_A_TRAIN_VOICE_ROOT: str = "/opt/GPT-SoVITS/sample_train_voice"
+    SERVER_A_LOGS_ROOT: str = "/opt/GPT-SoVITS/logs"
+    SERVER_A_TEMP_ROOT: str = "/opt/GPT-SoVITS/TEMP"  # 학습 중간 TEMP (abort 시 삭제)
     
     # Paths (Configurable for Windows/Ubuntu)
     SHARED_MODELS_DIR: str = "/mnt/shared_models"
     USER_ASSETS_DIR: str = "/mnt/user_assets"
+
+    # Redis (TTS Queue & Stream)
+    # Docker Compose: redis://redis:6379/0
+    # Local: redis://localhost:6379/0
+    REDIS_URL: str = "redis://localhost:6379/0"
+    
+    # TTS Queue Settings
+    TTS_QUEUE_MAX_SIZE: int = 100
+    TTS_QUEUE_JOB_TIMEOUT: int = 60  # 초
+    TTS_RESULT_TTL: int = 300  # 5분
 
     model_config = SettingsConfigDict(
         env_file=".env", 

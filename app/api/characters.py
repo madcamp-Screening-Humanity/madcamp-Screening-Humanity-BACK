@@ -9,43 +9,82 @@ from sqlalchemy import select, delete
 import httpx
 
 from app.core.config import settings
-from app.api.deps import get_db, get_current_user
+from app.api.deps import get_db, get_current_user, require_admin
 from app.models.user import User
 from app.models.character import Character
 
 router = APIRouter()
 
-# 설정 파일 경로
-CHARACTERS_CONFIG_PATH = Path(__file__).parent.parent / "config" / "characters.json"
+# 사전설정 캐릭터 캐시: (base, mtime) 변경 시 무효화
+_preset_characters_cache: Optional[List[Dict[str, Any]]] = None
+_cache_key: Optional[tuple] = None  # (base_path, dir_mtime)
 
-# 사전설정 캐릭터 캐시
-_preset_characters_cache = None
-_cache_file_mtime = None
+
+def _resolve_preset_characters_dir() -> Optional[Path]:
+    """
+    프리셋 캐릭터 디렉터리 해석.
+    1) PRESET_CHARACTERS_DIR env
+    2) 모노레포 기본: [프로젝트 루트]/madcamp-Screening-Humanity-FRONT/public/characters (exists 시)
+    3) 폴백: app/config/characters
+    """
+    # 1) 환경변수
+    env_path = os.environ.get("PRESET_CHARACTERS_DIR")
+    if env_path:
+        p = Path(env_path)
+        if p.is_dir():
+            return p
+        return None
+    # 2) 모노레포 기본: app/api 기준 6단계 상위 = 프로젝트 루트(madcamp03)
+    try:
+        base = Path(__file__).resolve().parent.parent.parent.parent.parent.parent
+        monorepo = base / "madcamp-Screening-Humanity-FRONT" / "public" / "characters"
+        if monorepo.is_dir():
+            return monorepo
+    except Exception:
+        pass
+    # 3) 폴백: app/config/characters
+    fallback = Path(__file__).resolve().parent.parent / "config" / "characters"
+    if fallback.is_dir():
+        return fallback
+    return None
+
 
 def load_preset_characters() -> List[Dict[str, Any]]:
-    """사전설정 캐릭터 설정 파일 로드 (파일 변경 감지)"""
-    global _preset_characters_cache, _cache_file_mtime
-    
-    if not CHARACTERS_CONFIG_PATH.exists():
+    """사전설정 캐릭터: public/characters/*.json 폴더 스캔. (base, mtime) 캐시로 디렉터리 변경 시 재스캔."""
+    global _preset_characters_cache, _cache_key
+
+    base = _resolve_preset_characters_dir()
+    if base is None or not base.is_dir():
         _preset_characters_cache = []
-        _cache_file_mtime = None
+        _cache_key = None
         return []
-    
-    current_mtime = CHARACTERS_CONFIG_PATH.stat().st_mtime
-    
-    if _preset_characters_cache is not None and _cache_file_mtime == current_mtime:
-        return _preset_characters_cache
-    
+
     try:
-        with open(CHARACTERS_CONFIG_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            _preset_characters_cache = data.get("characters", [])
-            _cache_file_mtime = current_mtime
+        current_mtime = base.stat().st_mtime
+        new_key = (str(base), current_mtime)
+        if _preset_characters_cache is not None and _cache_key == new_key:
             return _preset_characters_cache
+
+        out: List[Dict[str, Any]] = []
+        for f in sorted(base.glob("*.json")):
+            try:
+                with open(f, "r", encoding="utf-8") as fp:
+                    obj = json.load(fp)
+                if not isinstance(obj, dict):
+                    continue
+                if "id" not in obj:
+                    obj["id"] = f.stem
+                out.append(obj)
+            except Exception as e:
+                print(f"사전설정 JSON 로드 실패 {f}: {e}")
+                continue
+        _preset_characters_cache = out
+        _cache_key = new_key
+        return out
     except Exception as e:
         print(f"사전설정 캐릭터 로드 실패: {e}")
         _preset_characters_cache = []
-        _cache_file_mtime = None
+        _cache_key = None
         return []
 
 # Pydantic 모델
@@ -56,7 +95,6 @@ class CharacterBase(BaseModel):
     voice_id: Optional[str] = Field(None, description="음성 ID")
     category: Optional[str] = Field(None, description="카테고리")
     tags: Optional[List[str]] = Field(None, description="태그 목록")
-    sample_dialogue: Optional[str] = Field(None, description="샘플 대화")
     image_url: Optional[str] = Field(None, description="이미지 URL")
 
 class CharacterCreate(CharacterBase):
@@ -69,13 +107,26 @@ class CharacterUpdate(BaseModel):
     voice_id: Optional[str] = None
     category: Optional[str] = None
     tags: Optional[List[str]] = None
-    sample_dialogue: Optional[str] = None
     image_url: Optional[str] = None
 
 class GenerateRequest(BaseModel):
     name: str
     description: Optional[str] = ""
     category: Optional[str] = ""
+
+
+# 관리자: 캐릭터–Voice 연결/교체용
+class AdminCharacterListItem(BaseModel):
+    id: str
+    name: str
+    voice_id: Optional[str] = None
+    is_preset: bool
+    user_id: Optional[str] = None
+
+
+class AdminCharacterVoiceUpdate(BaseModel):
+    voice_id: Optional[str] = None
+
 
 # Endpoints
 @router.get("/characters/presets")
@@ -121,7 +172,6 @@ async def list_user_characters(
                 "voice_id": char.voice_id,
                 "category": char.category,
                 "tags": tags,
-                "sample_dialogue": char.sample_dialogue,
                 "image_url": char.image_url,
                 "is_preset": char.is_preset,
                 "user_id": char.user_id,
@@ -157,7 +207,6 @@ async def create_character(
             voice_id=character.voice_id,
             category=character.category,
             tags=tags_json,
-            sample_dialogue=character.sample_dialogue,
             image_url=character.image_url,
             is_preset=False
         )
@@ -177,7 +226,6 @@ async def create_character(
                 "voice_id": db_character.voice_id,
                 "category": db_character.category,
                 "tags": tags,
-                "sample_dialogue": db_character.sample_dialogue,
                 "image_url": db_character.image_url,
                 "is_preset": db_character.is_preset,
                 "user_id": db_character.user_id,
@@ -192,6 +240,187 @@ async def create_character(
             detail=f"캐릭터 생성 실패: {str(e)}"
         )
 
+
+@router.get("/characters/my")
+async def list_my_characters(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """내 캐릭터 페르소나 목록 (user_id=me, DB only, is_preset=False)"""
+    try:
+        result = await db.execute(
+            select(Character).where(
+                Character.user_id == current_user.id,
+                Character.is_preset == False,
+            ).order_by(Character.created_at.desc())
+        )
+        characters = result.scalars().all()
+        character_list = []
+        for char in characters:
+            tags = json.loads(char.tags) if char.tags else []
+            character_list.append({
+                "id": char.id,
+                "name": char.name,
+                "description": char.description,
+                "persona": char.persona,
+                "voice_id": char.voice_id,
+                "category": char.category,
+                "tags": tags,
+                "image_url": char.image_url,
+                "is_preset": char.is_preset,
+                "user_id": char.user_id,
+                "created_at": char.created_at.isoformat() if char.created_at else None
+            })
+        return {"success": True, "data": {"characters": character_list}}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"캐릭터 조회 실패: {str(e)}"
+        )
+
+
+@router.post("/characters/my")
+async def create_my_character(
+    character: CharacterCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """내 캐릭터 생성 (user_id=current_user.id)"""
+    try:
+        tags_json = json.dumps(character.tags) if character.tags else None
+        db_character = Character(
+            user_id=current_user.id,
+            name=character.name,
+            description=character.description,
+            persona=character.persona,
+            voice_id=character.voice_id,
+            category=character.category,
+            tags=tags_json,
+            image_url=character.image_url,
+            is_preset=False
+        )
+        db.add(db_character)
+        await db.commit()
+        await db.refresh(db_character)
+        tags = json.loads(db_character.tags) if db_character.tags else []
+        return {
+            "success": True,
+            "data": {
+                "id": db_character.id,
+                "name": db_character.name,
+                "description": db_character.description,
+                "persona": db_character.persona,
+                "voice_id": db_character.voice_id,
+                "category": db_character.category,
+                "tags": tags,
+                "image_url": db_character.image_url,
+                "is_preset": db_character.is_preset,
+                "user_id": db_character.user_id,
+                "created_at": db_character.created_at.isoformat() if db_character.created_at else None
+            }
+        }
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"캐릭터 생성 실패: {str(e)}"
+        )
+
+
+# ----- 관리자: 캐릭터–Voice 연결/교체 ( /characters/{character_id} 보다 위에 배치 ) -----
+
+@router.get("/characters/admin/all")
+async def list_admin_characters(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """관리자: DB + Preset 캐릭터 통합 목록 (voice 연결/교체용)"""
+    try:
+        # Preset
+        preset_chars = load_preset_characters()
+        preset_list = [
+            AdminCharacterListItem(
+                id=c.get("id", ""),
+                name=c.get("name", ""),
+                voice_id=c.get("voice_id"),
+                is_preset=True,
+                user_id=None,
+            )
+            for c in preset_chars if c.get("id")
+        ]
+        # DB (전체)
+        result = await db.execute(
+            select(Character).order_by(Character.created_at.desc())
+        )
+        db_chars = result.scalars().all()
+        db_list = [
+            AdminCharacterListItem(
+                id=char.id,
+                name=char.name,
+                voice_id=char.voice_id,
+                is_preset=bool(char.is_preset),
+                user_id=char.user_id,
+            )
+            for char in db_chars
+        ]
+        merged = preset_list + db_list
+        return {"success": True, "data": {"characters": [c.model_dump() for c in merged]}}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"캐릭터 목록 조회 실패: {str(e)}"
+        )
+
+
+@router.patch("/characters/admin/{character_id}/voice")
+async def update_admin_character_voice(
+    character_id: str,
+    body: AdminCharacterVoiceUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """관리자: 캐릭터 voice_id만 수정 (DB 또는 Preset JSON). null=연결 해제."""
+    global _preset_characters_cache, _cache_key
+    try:
+        preset_chars = load_preset_characters()
+        preset_char = next((c for c in preset_chars if c.get("id") == character_id), None)
+
+        if preset_char:
+            # Preset: {id}.json 단일 파일 읽기·쓰기
+            base = _resolve_preset_characters_dir()
+            if not base or not base.is_dir():
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="프리셋 디렉터리를 찾을 수 없습니다")
+            path = base / f"{character_id}.json"
+            if not path.exists():
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="사전설정 캐릭터를 찾을 수 없습니다")
+            with open(path, "r", encoding="utf-8") as f:
+                obj = json.load(f)
+            obj["voice_id"] = body.voice_id if body.voice_id is not None else None
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(obj, f, ensure_ascii=False, indent=2)
+            _preset_characters_cache = None
+            _cache_key = None
+            return {"success": True, "data": {"id": character_id, "name": preset_char.get("name", ""), "voice_id": body.voice_id}}
+
+        # DB
+        result = await db.execute(select(Character).where(Character.id == character_id))
+        character = result.scalar_one_or_none()
+        if not character:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="캐릭터를 찾을 수 없습니다")
+        character.voice_id = body.voice_id
+        await db.commit()
+        await db.refresh(character)
+        return {"success": True, "data": {"id": character.id, "name": character.name, "voice_id": character.voice_id}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"voice_id 수정 실패: {str(e)}"
+        )
+
+
 @router.get("/characters/{character_id}")
 async def get_character(
     character_id: str,
@@ -203,13 +432,9 @@ async def get_character(
         preset_char = next((c for c in preset_chars if c.get("id") == character_id), None)
         
         if preset_char:
-            return {
-                "success": True,
-                "data": {
-                    **preset_char,
-                    "is_preset": True
-                }
-            }
+            data = dict(preset_char)
+            data["is_preset"] = True
+            return {"success": True, "data": data}
         
         result = await db.execute(
             select(Character).where(Character.id == character_id)
@@ -233,7 +458,6 @@ async def get_character(
                 "voice_id": character.voice_id,
                 "category": character.category,
                 "tags": tags,
-                "sample_dialogue": character.sample_dialogue,
                 "image_url": character.image_url,
                 "is_preset": character.is_preset,
                 "user_id": character.user_id,
@@ -303,7 +527,6 @@ async def update_character(
                 "voice_id": character.voice_id,
                 "category": character.category,
                 "tags": tags,
-                "sample_dialogue": character.sample_dialogue,
                 "image_url": character.image_url,
                 "is_preset": character.is_preset,
                 "user_id": character.user_id,
@@ -386,8 +609,7 @@ async def generate_character_details(
                 "persona": f"성격: {request.name}은 매우 성실하고 계획적입니다.\n말투: 정중하고 차분한 말투를 사용합니다.\n배경: 평범한 학생이었으나 사건을 겪으며 변화했습니다.\n목표: 진실을 밝히는 것이 최종 목표입니다.",
                 "description": f"{request.name} 캐릭터의 상세 설정입니다.",
                 "category": request.category or "일반",
-                "tags": ["성실", "정중", "목표의식"],
-                "sample_dialogue": "안녕하십니까, 제가 도와드릴 일이 있을까요?"
+                "tags": ["성실", "정중", "목표의식"]
             }
         }
 
@@ -396,8 +618,7 @@ async def generate_character_details(
              f"다음 필드들을 포함해야 합니다:\n" \
              f"- persona: 캐릭터의 성격, 말투, 행동 패턴을 상세히 설명 (200자 이상). 다음 형식 포함: 성격, 말투, 배경, 목표\n" \
              f"- description: 캐릭터 요약 설명\n" \
-             f"- tags: 관련 태그 3-5개 배열\n" \
-             f"- sample_dialogue: 대표 대화\n\n" \
+             f"- tags: 관련 태그 3-5개 배열\n\n" \
              f"JSON 형식으로만 응답하세요."
 
     try:

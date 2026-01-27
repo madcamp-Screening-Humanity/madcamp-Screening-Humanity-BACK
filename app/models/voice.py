@@ -2,7 +2,7 @@
 Voice 모델
 GPT-SoVITS 참조 오디오 정보를 저장합니다.
 """
-from sqlalchemy import Column, String, DateTime, Boolean, Text
+from sqlalchemy import Column, String, DateTime, Boolean, Text, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 import uuid
@@ -38,10 +38,16 @@ class Voice(Base):
     
     # 훈련 음성 정보 (sample_train_voice 연결)
     train_voice_folder = Column(String(200), nullable=True)  # 훈련 음성 폴더명 (예: "makima", "frieren")
+    # 모델 제작(model-make) 업로드 시 Server A 경로 및 학습 모델명
+    train_input_dir = Column(String(500), nullable=True)   # 업로드 WAV가 저장된 Server A 디렉터리 (예: user_{id}/run_{ts})
+    training_model_name = Column(String(200), nullable=True)  # 학습 시 사용한 model_name (logs/{model_name} 삭제용)
     
     # 메타데이터
     is_default = Column(Boolean, default=False)  # 기본 음성 여부
     is_active = Column(Boolean, default=True)    # 활성화 상태 (비활성화 시 목록에서 숨김)
+    
+    # 소유자 (None이면 시스템/관리자 음성)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
     
     # 타임스탬프
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -49,6 +55,7 @@ class Voice(Base):
     
     # 관계 설정 (캐릭터와 연동)
     characters = relationship("Character", back_populates="voice")
+    user = relationship("User", back_populates="voices")
     
     def __repr__(self):
         return f"<Voice(id={self.id}, name={self.name}, language={self.language})>"

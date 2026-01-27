@@ -1570,7 +1570,7 @@ const response = await chatApi.chat({
 
 **구현 완료된 내용**:
 - [x] 세션 관리 (UUID 자동 생성)
-- [x] 초기 메시지 API 생성 (sample_dialogue 우선, API 폴백)
+- [x] 초기 메시지(첫 대사): 첫 대사 AI 생성, sample_dialogue 미사용
 - [x] 실제 API 연동 (하드코딩된 응답 완전 제거)
 - [x] TTS 통합 (audio_url 처리, 오디오 재생)
 - [x] 에러 처리 개선 (Toast, retryWithBackoff)

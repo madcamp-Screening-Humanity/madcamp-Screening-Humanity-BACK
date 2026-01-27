@@ -26,8 +26,7 @@ class Character(Base):
     category = Column(String(50), nullable=True)
     tags = Column(Text, nullable=True)  # JSON 문자열로 저장
     
-    # 샘플 대화 및 이미지
-    sample_dialogue = Column(Text, nullable=True)
+    # 이미지
     image_url = Column(String(255), nullable=True)
     
     # 3D 모델 관련

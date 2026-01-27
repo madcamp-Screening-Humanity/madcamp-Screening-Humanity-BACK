@@ -2,20 +2,22 @@
 Voice 관리 API 엔드포인트
 음성 목록 조회, 등록, 수정, 삭제 및 테스트 기능을 제공합니다.
 """
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, status, Form, UploadFile, File
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import uuid
+import logging
 import httpx
 
-from app.api.deps import get_db, get_current_user
+from app.api.deps import get_db, get_current_user, require_admin
 from app.models.voice import Voice
 from app.models.user import User
 from app.core.config import settings
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 # ============ 요청/응답 모델 ============
@@ -36,10 +38,13 @@ class VoiceBase(BaseModel):
     is_default: bool = Field(default=False, description="기본 음성 여부")
     is_active: bool = Field(default=True, description="활성화 상태")
 
+    model_config = ConfigDict(protected_namespaces=())
+
 
 class VoiceCreateRequest(VoiceBase):
     """음성 생성 요청"""
-    pass
+    train_input_dir: Optional[str] = Field(None, description="훈련 업로드 경로 (관리자 학습·DB연동용)")
+    training_model_name: Optional[str] = Field(None, description="학습 model_name (logs 삭제용)")
 
 
 class VoiceUpdateRequest(BaseModel):
@@ -57,6 +62,8 @@ class VoiceUpdateRequest(BaseModel):
     is_default: Optional[bool] = None
     is_active: Optional[bool] = None
 
+    model_config = ConfigDict(protected_namespaces=())
+
 
 class VoiceResponse(BaseModel):
     """음성 응답 모델"""
@@ -71,13 +78,23 @@ class VoiceResponse(BaseModel):
     sovits_weights_path: Optional[str] = None
     model_version: Optional[str] = None
     train_voice_folder: Optional[str] = None
+    train_input_dir: Optional[str] = None   # 모델 제작 업로드 경로 (user_{id}/run_{ts})
+    training_model_name: Optional[str] = None  # 학습 model_name (logs 삭제용)
     is_default: bool
     is_active: bool
+    user_id: Optional[str] = None  # 소유자 (None=시스템)
     created_at: Optional[str]
     updated_at: Optional[str]
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(protected_namespaces=(), from_attributes=True)
+
+
+class VoiceLinkOption(BaseModel):
+    """캐릭터 voice_id 선택용 { id, name, gpt_weights_path?, sovits_weights_path? }"""
+    id: str
+    name: str
+    gpt_weights_path: Optional[str] = None
+    sovits_weights_path: Optional[str] = None
 
 
 class VoiceListResponse(BaseModel):
@@ -89,28 +106,6 @@ class VoiceListResponse(BaseModel):
 class VoiceTestRequest(BaseModel):
     """음성 테스트 요청"""
     text: str = Field(default="안녕하세요, 반갑습니다.", description="테스트 텍스트")
-
-
-# ============ 관리자 권한 확인 ============
-
-async def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    """
-    관리자 권한 확인 의존성
-    ADMIN_EMAILS 환경변수에 등록된 이메일만 관리자로 인정
-    """
-    if not current_user or not current_user.email:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="인증이 필요합니다"
-        )
-    
-    if not settings.is_admin(current_user.email):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="관리자 권한이 필요합니다"
-        )
-    
-    return current_user
 
 
 # ============ Server A 파일 관리 API (관리자, 순서 중요: ID 매칭 방지 위해 상단 배치) ============
@@ -133,15 +128,14 @@ async def get_server_files(
             if response.status_code == 200:
                 return response.json()
             
-            # API가 통합 엔드포인트를 지원하지 않는 경우 개별 조회
+            # API가 통합 엔드포인트를 지원하지 않는 경우 개별 조회 (models, train_voices, logs)
             models_res = await client.get(f"{api_url}/api/files/models")
             train_voices_res = await client.get(f"{api_url}/api/files/train-voices")
-            ref_audio_res = await client.get(f"{api_url}/api/files/ref-audio")
-            
+            logs_res = await client.get(f"{api_url}/api/files/logs")
             return {
                 "models": models_res.json() if models_res.status_code == 200 else {},
                 "train_voices": train_voices_res.json() if train_voices_res.status_code == 200 else {},
-                "ref_audio": ref_audio_res.json() if ref_audio_res.status_code == 200 else {}
+                "logs": logs_res.json() if logs_res.status_code == 200 else {"models": []}
             }
             
     except httpx.RequestError as e:
@@ -151,56 +145,45 @@ async def get_server_files(
         )
 
 
+# 허용 오디오 확장자 (train_voice 전용 업로드)
+_ALLOWED_AUDIO_EXT = {".wav", ".mp3", ".flac", ".ogg"}
+
+
 @router.post("/voices/server-files/upload")
-async def upload_server_file(
-    category: str = Form(..., description="ref_audio, train_voice, gpt_weights, sovits_weights"),
+async def upload_train_voice_file(
     file: UploadFile = File(...),
-    sub_path: Optional[str] = Form(None),
-    model_version: str = Form("v2"),
+    sub_path: str = Form(..., description="sample_train_voice 하위 폴더명(캐릭터명)"),
     current_user: User = Depends(require_admin)
 ):
     """
-    Server A에 파일 업로드 (관리자 전용)
-    
-    대용량 모델 파일 업로드를 지원합니다. 타임아웃은 300초(5분)입니다.
+    훈련 데이터(train_voice) 전용 업로드. 오디오(.wav, .mp3, .flac, .ogg)만 허용.
+    Server A /api/files/upload로 category=train_voice, sub_path 전달.
     """
+    if not file.filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="파일명이 없습니다")
+    ext = "." + file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+    if ext not in _ALLOWED_AUDIO_EXT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"오디오 파일만 허용됩니다: {', '.join(_ALLOWED_AUDIO_EXT)}"
+        )
     api_url = settings.SERVER_A_FILES_API_URL.rstrip("/")
     upload_url = f"{api_url}/api/files/upload"
-    
     try:
-        # 파일 내용을 읽어서 전송 (메모리 효율을 위해 청크 단위 전송 고려 가능하나, httpx는 file-like 객체 지원)
-        # UploadFile.file은 SpooledTemporaryFile 이므로 이를 활용
-        files = {
-            "file": (file.filename, file.file, file.content_type)
-        }
-        data = {
-            "category": category,
-            "sub_path": sub_path if sub_path else "",
-            "model_version": model_version
-        }
-        
-        # 대용량 파일 전송을 위해 타임아웃 길게 설정 (5분)
+        files = {"file": (file.filename, file.file, file.content_type or "application/octet-stream")}
+        data = {"category": "train_voice", "sub_path": sub_path}
         async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.post(upload_url, data=data, files=files)
-            
             if response.status_code != 200:
-                raise HTTPException(
-                    status_code=response.status_code,
-                    detail=f"Upload Failed: {response.text}"
-                )
-            
+                raise HTTPException(status_code=response.status_code, detail=f"Upload Failed: {response.text}")
             return response.json()
-            
     except httpx.RequestError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Server A 연결 실패: {str(e)}"
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"업로드 오류: {str(e)}"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"업로드 오류: {str(e)}")
 
 
 @router.delete("/voices/server-files")
@@ -259,6 +242,30 @@ async def create_server_folder(
         )
 
 
+# ============ 사용자 API (get_current_user, /voices/{id} 보다 먼저 정의) ============
+
+@router.get("/voices/link-options", response_model=List[VoiceLinkOption])
+async def get_voice_link_options(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """캐릭터 voice_id 선택용: DB Voice만. { id, name, gpt_weights_path?, sovits_weights_path? }"""
+    q = select(Voice).where(
+        (Voice.user_id == current_user.id) | (Voice.user_id.is_(None))
+    ).where(Voice.is_active == True).order_by(Voice.name)
+    res = await db.execute(q)
+    rows = res.scalars().all()
+    return [
+        VoiceLinkOption(
+            id=v.id,
+            name=v.name,
+            gpt_weights_path=v.gpt_weights_path,
+            sovits_weights_path=v.sovits_weights_path
+        )
+        for v in rows
+    ]
+
+
 # ============ 공개 API (인증 불필요) ============
 
 @router.get("/voices", response_model=VoiceListResponse)
@@ -290,10 +297,17 @@ async def list_voices(
             ref_audio_path=voice.ref_audio_path,
             prompt_text=voice.prompt_text,
             prompt_lang=voice.prompt_lang,
+            gpt_weights_path=voice.gpt_weights_path,
+            sovits_weights_path=voice.sovits_weights_path,
+            model_version=voice.model_version,
+            train_voice_folder=voice.train_voice_folder,
+            train_input_dir=getattr(voice, "train_input_dir", None),
+            training_model_name=getattr(voice, "training_model_name", None),
             is_default=voice.is_default,
             is_active=voice.is_active,
+            user_id=getattr(voice, "user_id", None),
             created_at=voice.created_at.isoformat() if voice.created_at else None,
-            updated_at=voice.updated_at.isoformat() if voice.updated_at else None
+            updated_at=voice.updated_at.isoformat() if voice.updated_at else None,
         ))
     
     return VoiceListResponse(voices=voice_responses, total=len(voice_responses))
@@ -324,10 +338,17 @@ async def get_voice(
         ref_audio_path=voice.ref_audio_path,
         prompt_text=voice.prompt_text,
         prompt_lang=voice.prompt_lang,
+        gpt_weights_path=voice.gpt_weights_path,
+        sovits_weights_path=voice.sovits_weights_path,
+        model_version=voice.model_version,
+        train_voice_folder=voice.train_voice_folder,
+        train_input_dir=getattr(voice, "train_input_dir", None),
+        training_model_name=getattr(voice, "training_model_name", None),
         is_default=voice.is_default,
         is_active=voice.is_active,
+        user_id=getattr(voice, "user_id", None),
         created_at=voice.created_at.isoformat() if voice.created_at else None,
-        updated_at=voice.updated_at.isoformat() if voice.updated_at else None
+        updated_at=voice.updated_at.isoformat() if voice.updated_at else None,
     )
 
 
@@ -358,8 +379,14 @@ async def create_voice(
         description=request.description,
         language=request.language,
         ref_audio_path=request.ref_audio_path,
-        prompt_text=request.prompt_text,
+        prompt_text=request.prompt_text or "",
         prompt_lang=request.prompt_lang,
+        gpt_weights_path=request.gpt_weights_path,
+        sovits_weights_path=request.sovits_weights_path,
+        model_version=request.model_version or "v2",
+        train_voice_folder=request.train_voice_folder,
+        train_input_dir=getattr(request, "train_input_dir", None),
+        training_model_name=getattr(request, "training_model_name", None),
         is_default=request.is_default,
         is_active=request.is_active
     )
@@ -376,8 +403,15 @@ async def create_voice(
         ref_audio_path=voice.ref_audio_path,
         prompt_text=voice.prompt_text,
         prompt_lang=voice.prompt_lang,
+        gpt_weights_path=voice.gpt_weights_path,
+        sovits_weights_path=voice.sovits_weights_path,
+        model_version=voice.model_version,
+        train_voice_folder=voice.train_voice_folder,
+        train_input_dir=getattr(voice, "train_input_dir", None),
+        training_model_name=getattr(voice, "training_model_name", None),
         is_default=voice.is_default,
         is_active=voice.is_active,
+        user_id=getattr(voice, "user_id", None),
         created_at=voice.created_at.isoformat() if voice.created_at else None,
         updated_at=voice.updated_at.isoformat() if voice.updated_at else None
     )
@@ -427,8 +461,15 @@ async def update_voice(
         ref_audio_path=voice.ref_audio_path,
         prompt_text=voice.prompt_text,
         prompt_lang=voice.prompt_lang,
+        gpt_weights_path=voice.gpt_weights_path,
+        sovits_weights_path=voice.sovits_weights_path,
+        model_version=voice.model_version,
+        train_voice_folder=voice.train_voice_folder,
+        train_input_dir=getattr(voice, "train_input_dir", None),
+        training_model_name=getattr(voice, "training_model_name", None),
         is_default=voice.is_default,
         is_active=voice.is_active,
+        user_id=getattr(voice, "user_id", None),
         created_at=voice.created_at.isoformat() if voice.created_at else None,
         updated_at=voice.updated_at.isoformat() if voice.updated_at else None
     )
@@ -508,6 +549,12 @@ async def test_voice(
         "media_type": "wav"
     }
     
+    # 파인튜닝 모델 가중치 추가
+    if voice.gpt_weights_path:
+        tts_request["gpt_weights"] = voice.gpt_weights_path
+    if voice.sovits_weights_path:
+        tts_request["sovits_weights"] = voice.sovits_weights_path
+    
     try:
         async with httpx.AsyncClient(verify=settings.TTS_SSL_VERIFY, timeout=settings.TTS_TIMEOUT) as client:
             response = await client.post(tts_url, json=tts_request)
@@ -549,3 +596,123 @@ async def test_voice(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"TTS 테스트 오류: {str(e)}"
         )
+
+
+# ============ 학습 API (Server A Proxy) ============
+
+class TrainStartRequest(BaseModel):
+    """학습 시작 요청"""
+    model_name: str
+    upload_path: str
+    version: str = "v2"
+    batch_size: int = 11
+    total_epochs: int = 8
+    save_every_epoch: int = 4
+    gpu_numbers: str = "0-0"
+    dry_run: bool = False
+
+    model_config = ConfigDict(protected_namespaces=())
+
+@router.post("/voices/train/start")
+async def start_training_proxy(
+    request: TrainStartRequest,
+    current_user: User = Depends(require_admin)
+):
+    """
+    학습 시작 (파록시)
+    
+    Server A의 /api/train/start 엔드포인트를 호출합니다.
+    """
+    api_url = settings.SERVER_A_TRAINING_API_URL.rstrip("/") if hasattr(settings, "SERVER_A_TRAINING_API_URL") else "http://localhost:10002"
+    target_url = f"{api_url}/api/train/start"
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(target_url, json=request.dict())
+            
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Training Start Failed: {response.text}"
+                )
+            
+            return response.json()
+            
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Server A 학습 API 연결 실패: {str(e)}"
+        )
+
+
+@router.get("/voices/train/status/{model_name}")
+async def get_training_status_proxy(
+    model_name: str,
+    current_user: User = Depends(require_admin)
+):
+    """
+    학습 상태 조회 (파록시)
+    
+    Server A의 /api/train/status/{model_name} 호출
+    """
+    api_url = settings.SERVER_A_TRAINING_API_URL.rstrip("/") if hasattr(settings, "SERVER_A_TRAINING_API_URL") else "http://localhost:10002"
+    target_url = f"{api_url}/api/train/status/{model_name}"
+    
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(target_url)
+            
+            if response.status_code == 404:
+                raise HTTPException(status_code=404, detail="Training status not found")
+            
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Status Check Failed: {response.text}"
+                )
+            
+            return response.json()
+            
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Server A 학습 API 연결 실패: {str(e)}"
+        )
+
+
+@router.get("/voices/train/log/{model_name}")
+async def get_training_log_proxy(
+    model_name: str,
+    current_user: User = Depends(require_admin)
+):
+    """
+    학습 로그 조회 (파록시)
+    
+    Server A의 /api/train/log/{model_name} 호출
+    """
+    api_url = settings.SERVER_A_TRAINING_API_URL.rstrip("/") if hasattr(settings, "SERVER_A_TRAINING_API_URL") else "http://localhost:10002"
+    target_url = f"{api_url}/api/train/log/{model_name}"
+    
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(target_url)
+            
+            if response.status_code == 404:
+                raise HTTPException(status_code=404, detail="Log not found")
+                
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Log Retrieval Failed: {response.text}"
+                )
+            
+            return response.json()
+            
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Server A 학습 API 연결 실패: {str(e)}"
+        )
+
+# ============ 기존 에러 핸들링 끝부분 ============
+
