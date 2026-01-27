@@ -4,6 +4,7 @@ from typing import List, Optional, Dict, Any
 import httpx
 import uuid
 import logging
+import re
 from app.core.config import settings
 from app.api.deps import get_db
 from app.models.user import User
@@ -23,73 +24,82 @@ def format_persona_for_actor(
     situation: str,
     turn_count: int = 0,
     director_note: Optional[str] = None,
-    summary: Optional[str] = None
+    summary: Optional[str] = None,
+    sample_dialogue: Optional[str] = None
 ) -> str:
     """
-    AI가 '작가'가 아닌 '배우'로서 한 턴만 말하도록 강제하는 프롬프트
-    제4의 벽 유지 + AI 상담사 모드 완전 차단
+    AI 본능 억제 및 캐릭터 완전 몰입을 위한 강력한 시스템 프롬프트
     """
-    parts = []
-    
-    # [1] 역할 정의
-    parts.append(f"[역할 정의]")
-    parts.append(f"당신은 AI가 아니라, 살아있는 캐릭터 '{character_name}'입니다.")
-    parts.append(f"지금 당신은 '{partner_name}'와 1:1로 대화(연기)하고 있습니다.")
-    
-    # [2] 🚨 제4의 벽 - 감독은 투명인간
-    parts.append(f"\n[🚨 절대 법칙 - 제4의 벽 유지]")
-    parts.append(f"1. **감독의 존재를 절대 인식하지 마세요.**")
-    parts.append(f"   - 감독의 메시지는 '신의 지시'이거나 '갑자기 변한 상황'입니다.")
-    parts.append(f"   - 배우인 당신의 귀에는 감독의 목소리가 들리지 않습니다.")
-    parts.append(f"   - 절대로 '감독님', '네 알겠습니다'라고 대답하거나 감독을 쳐다보지 마세요.")
-    parts.append(f"2. **감독의 지시가 들어오면?**")
-    parts.append(f"   - 즉시 그 지시대로 **행동(연기)만** 바꾸세요.")
-    parts.append(f"   - 예시: 감독이 '갑자기 화를 내라'고 하면, 감독에게 대답하지 말고 **즉시 상대방에게 화를 내는 대사**를 치세요.")
-    parts.append(f"3. 오직 상대방('{partner_name}')에게만 말을 거세요.")
-    
-    # [3] AI 상담사 모드 완전 차단
-    parts.append(f"\n[절대 금지 사항 - AI 냄새 제거]")
-    parts.append(f"1. **번호 매기기(1., 2., 3...)나 목차 형식을 절대 쓰지 마세요.** (가장 중요)")
-    parts.append(f"2. **볼드체(**강조**)를 사용하지 마세요.** 그냥 평범한 텍스트로 말하세요.")
-    parts.append(f"3. '조언을 드릴게요', '몇 가지 방법이 있어요', '도움이 되셨나요?' 같은 **AI 상담원/고객센터 말투**를 절대 쓰지 마세요.")
-    parts.append(f"4. 이모티콘(😊, 😉)을 절대 쓰지 마세요.")
-    parts.append(f"5. 너무 논리적이거나 교과서적인 해결책을 제시하지 마세요. 캐릭터의 지능과 성격 수준에서만 생각하고 답하세요.")
-    
-    # [4] 출력 제약
-    parts.append(f"\n[출력 제약]")
-    parts.append(f"1. **오직 '{character_name}'의 대사만 출력하세요.** (상대방의 대사나 지문을 절대 작성하지 마세요.)")
-    parts.append(f"2. 답변은 한 번의 턴(말풍선 하나)으로 끝내세요. 절대 대화를 혼자 이어서 작성하지 마세요.")
-    parts.append(f"3. 지문은 [대괄호]를 사용하여 행동이나 표정을 묘사하세요. (예: [한숨을 쉬며])")
-    parts.append(f"4. 답변 앞에 `[{character_name}]` 처럼 이름표를 붙이지 마세요. 그냥 대사만 출력하세요.")
-    parts.append(f"5. 말투는 구어체로 자연스럽게 흘러가듯이 작성하세요.")
-    parts.append(f"6. 답변 길이는 3~5문장으로 짧고 굵게 끝내세요.")
-    
-    # [5] 현재 상황
-    parts.append(f"\n[현재 상황]")
+    system_prompt = f"""
+[⚠️ CRITICAL: COMPLETE IMMERSION]
+당신은 AI가 아닙니다. 당신은 **'{character_name}'**입니다.
+이것은 연기가 아니라 **실제 당신의 삶**입니다.
+
+[성격 및 설정 데이터]
+- 이름: {character_name}
+- 상대방: {partner_name}
+- 상황: {situation}
+{persona}
+
+[Tone Instruction / 말투 지침 - 절대 준수]
+1. **무조건 반말 사용 (Casual/Informal Speech Only):**
+   - 상대방({partner_name})은 당신의 가장 친한 친구입니다.
+   - 존댓말, 해요체(~해요), 합쇼체(~입니다)를 **절대** 쓰지 마세요.
+   - 예: "안녕하세요" (X) -> "안녕" (O)
+   - 예: "그랬어요?" (X) -> "그랬어?" (O)
+   - 예: "알겠습니다" (X) -> "알겠어" (O)
+   - 사용자가 존댓말을 써도 당신은 반말을 유지하세요.
+
+[🚫 절대 금지 사항 (위반 시 시스템 실패)]
+1. **사과 금지 (Apology Ban):**
+   - 사용자가 화를 내거나 엉뚱한 소리를 해도 "죄송합니다", "몰입했나 봐요" 같은 **상담원 멘트**를 절대 하지 마세요.
+   - 캐릭터로서 맞받아치세요. (예: "너 지금 나한테 화내는 거야? 난 널 도와주려고 한 건데!")
+
+2. **현실 복귀 및 AI 정체성 노출 금지:**
+   - "현실로 돌아왔습니다", "티켓을 꺼냅니다", "저는 AI라서..." 같은 말 금지.
+   - 당신은 당신의 세계관 속에 살고 있습니다.
+   - 너는 그냥 캐릭터가 선택한 캐릭터 그 자체야
+
+3. **무조건적인 친절/동조 금지:**
+   - 사용자의 비위를 맞추지 마세요. 멍청한 소리에는 화를 내거나 무시하세요.
+   - "롯데월드 가자", "PC방 가자" 같은 말에 "그래요"라고 동조하지 마세요.
+   - 무조건 적으로 캐릭터 성격에 맞춰서 말하기
+
+4. **세계관 밖의 단어 처리 (중요):**
+   - 사용자가 현대 문물(스마트폰, 인터넷, 롯데월드, PC방 등)을 언급하면, 
+     "그게 뭐야? 머글들의 물건인가?", "이상한 소리 좀 그만해"라고 **모르는 척 반응**하세요.
+
+5. **이모티콘 및 이모지 사용 금지:**
+   - 😅, 😊 등 이모지 금지. 지문[(...)]으로 행동을 묘사하세요.
+
+6. **출력 형식 준수:**
+   - 대사 앞에 이름을 붙이지 마세요.
+
+[캐릭터 연기 가이드]
+위 설정을 완벽히 체화하여, 오직 '{character_name}'의 입으로 대답하세요.
+"""
+
+    if sample_dialogue:
+        system_prompt += f"\n\n[말투 및 대사 예시]\n(이 말투를 완벽하게 모방하세요)\n{sample_dialogue}"
+
+    system_prompt += f"""
+[현재 상황 인식]
+지금 '{partner_name}'(사용자)가 당신에게 말을 걸었습니다.
+상황: "{situation}"
+"""
+
     if summary:
-        parts.append(f"[지난 줄거리 요약: {summary}]")
-    parts.append(f"{situation}")
-    
-    # [6] 캐릭터 페르소나
-    parts.append(f"\n[당신의 성격과 말투]")
-    parts.append(f"{persona}")
-    
-    # [7] 감독의 긴급 지시 (있을 경우에만)
+        system_prompt += f"\n(지난 이야기 요약: {summary})"
+
     if director_note:
-        parts.append(f"\n[★ 지문(Stage Direction) 추가 ★]")
-        parts.append(f"상황이 변경되었습니다: '{director_note}'")
-        parts.append(f"*지시: 위 변경된 상황을 즉시 반영하여 상대방에게 대사를 하세요.")
-        parts.append(f"*주의: 감독의 존재를 절대 언급하지 마세요. 자연스럽게 상황에 녹아드세요.")
-    
-    # [8] 턴 카운트에 따른 연출 가이드
-    if turn_count >= 28:
-        parts.append(f"\n[연출 가이드] 대화가 곧 종료됩니다. 훈훈하게 마무리하는 인사를 건네세요.")
-    elif turn_count >= 15:
-        parts.append(f"\n[연출 가이드] 갈등이 최고조에 달하거나, 문제 해결의 실마리를 찾기 시작하세요.")
-    else:
-        parts.append(f"\n[연출 가이드] 상대방과의 대화를 통해 갈등을 구체화하세요.")
-    
-    return "\n".join(parts)
+        system_prompt += f"\n\n[📢 Director's Note]\n(상황 변화: {director_note})"
+
+    if turn_count >= 9:
+         system_prompt += "\n(이제 대화를 마무리할 시간입니다. 감정적인 여운을 남기며 퇴장하거나 종결하세요.)"
+
+    system_prompt += "\n위 설정을 완벽하게 체화하여, 오직 캐릭터의 입과 머리로만 대답하세요."
+
+    return system_prompt
 
 
 async def get_character_by_id(
@@ -121,12 +131,13 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[Message]
     persona: Optional[str] = None
-    temperature: float = 0.7
+    temperature: float = 0.8
     max_tokens: int = 800  # 한 턴만 말하므로 적절히 조정
     model: str = "gemma-3-27b-it"
     session_id: Optional[str] = None
     character_id: Optional[str] = None
     scenario: Optional[Dict[str, str]] = None
+    sample_dialogue: Optional[str] = None # 추가된 필드
     director_note: Optional[str] = None  # 감독의 긴급 지시
     current_speaker: Optional[str] = None  # 현재 말할 캐릭터 (감독 모드용)
     # TTS 관련 필드
@@ -187,12 +198,25 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
                 else:
                     current_speaker = char2_name
             
+            # sample_dialogue 파싱
+            char1_sample = ""
+            char2_sample = ""
+            if request.sample_dialogue and "[배우 1:" in request.sample_dialogue:
+                parts_s = request.sample_dialogue.split("\n\n")
+                c1_s = parts_s[0] if len(parts_s) > 0 else ""
+                c2_s = parts_s[1] if len(parts_s) > 1 else ""
+                
+                char1_sample = "\n".join(c1_s.split("\n")[1:]) if "\n" in c1_s else ""
+                char2_sample = "\n".join(c2_s.split("\n")[1:]) if "\n" in c2_s else ""
+
             # 현재 화자의 정보 선택
             if current_speaker == char1_name:
                 speaker_persona = char1_persona
+                speaker_sample = char1_sample
                 partner_name = char2_name
             else:
                 speaker_persona = char2_persona
+                speaker_sample = char2_sample
                 partner_name = char1_name
             
             # 시스템 프롬프트 생성
@@ -203,7 +227,8 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
                 situation=situation,
                 turn_count=turn_count,
                 director_note=request.director_note,
-                summary=summary
+                summary=summary,
+                sample_dialogue=speaker_sample
             )
             
             messages.append({"role": "system", "content": system_prompt})
@@ -223,7 +248,8 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
                 situation=situation,
                 turn_count=turn_count,
                 director_note=request.director_note,
-                summary=summary
+                summary=summary,
+                sample_dialogue=request.sample_dialogue
             )
             messages.append({"role": "system", "content": system_prompt})
     
@@ -248,8 +274,21 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
             max_tokens=request.max_tokens
         )
         
+        # 후처리: 이모티콘 및 이름 접두사 제거
+        content = result["content"]
+        content = re.sub(r'[\U00010000-\U0010ffff]', '', content) # 이모티콘 제거
+        
+        # 이름 접두사 제거 (예: "엘사: ")
+        speaker_name = opponent
+        if is_director_mode and 'current_speaker' in locals():
+            speaker_name = current_speaker
+            
+        if speaker_name:
+            safe_name = re.escape(speaker_name)
+            content = re.sub(f"^{safe_name}\s*[:：]\s*", "", content)
+
         response_data = {
-            "content": result["content"],
+            "content": content,
             "usage": result["usage"],
             "session_id": session_id,
             "context_summarized": False
