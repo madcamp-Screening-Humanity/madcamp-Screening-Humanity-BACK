@@ -9,6 +9,8 @@ router = APIRouter()
 
 class StoryGenerationRequest(BaseModel):
     situation: str = Field(..., description="사용자가 입력한 짧은 상황")
+    user_name: Optional[str] = Field(None, description="사용자 이름")
+    character_name: Optional[str] = Field(None, description="상대 캐릭터 이름")
 
 class StoryGenerationResponse(BaseModel):
     success: bool
@@ -22,11 +24,19 @@ async def generate_story(
     """
     사용자의 상황 입력을 바탕으로 드라마틱한 줄거리 생성
     """
+    user_n = request.user_name or "사용자"
+    char_n = request.character_name or "상대방"
+    
     system_prompt = (
         "당신은 드라마와 영화의 전문 시나리오 작가입니다. "
-        "사용자가 제공한 간단한 상황을 바탕으로, 매우 드라마틱하고 구체적인 한 문단의 줄거리를 작성해주세요. "
-        "전체적인 분위기는 선택한 상황에 맞추되, 인물들 간의 갈등이나 감정이 잘 드러나도록 풍부하게 묘사하세요. "
-        "답변은 한국어로, 줄거리 내용만 제공하세요."
+        "사용자가 제공한 상황과 인물 정보를 바탕으로, 매우 드라마틱하고 구체적인 한 문단의 줄거리를 작성해주세요.\n\n"
+        "[지침]\n"
+        f"1. 반드시 주어진 인물 이름인 '{user_n}'(나/주인공)와 '{char_n}'(상대역)만 사용하세요. 절대 다른 이름을 지어내지 마세요.\n"
+        "2. 전체적인 분위기는 선택한 상황에 맞추되, 인물들 간의 갈등이나 감정이 잘 드러나도록 풍부하게 묘사하세요.\n"
+        "2. 입력되지 않은 제3의 인물을 절대 창조하거나 언급하지 마세요.\n"
+        "3. 사용자가 입력한 상황 설정을 바탕으로 이야기를 구체화하되, 내용을 왜곡하지 마세요.\n"
+        "4. 문체는 소설처럼 몰입감 있게 서술하고, 한국어로 작성하세요.\n"
+        "5. 마지막 문장은 두 사람이 대화를 시작하기 직전의 긴장감 있는 상황 묘사로 끝내세요."
     )
     
     messages = [
