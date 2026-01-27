@@ -1,8 +1,8 @@
 ---
 name: Avatar Forge 최종 통합 명세서
 overview: Avatar Forge 전체 아키텍처·단계별 구현 계획·API 명세·VRAM 전략·컨테이너 전략을 하나로 통합한 최종 기준 문서
-version: 1.20.0
-lastUpdated: 2026-01-26
+version: 1.24.0
+lastUpdated: 2026-01-27
 ---
 
 # Avatar Forge 최종 통합 명세서 (FINALFINAL)
@@ -24,21 +24,16 @@ lastUpdated: 2026-01-26
 
 ---
 
-## ⚠️ 미구현 기능 목록 (2026-01-26)
+## ⚠️ 미구현 및 부분 구현 기능 (2026-01-27)
 
-### Phase 5 관련 미구현 기능
+### Phase 5 관련
 
-1. **Phase 5.2: 컨텍스트 절약 요약 기능** (필수, 미구현)
-   - 구현 위치: `server-b/backend/app/services/context_manager.py` (신규 생성)
-   - 구현 시기: Phase 5.1 완료 후 즉시
-   - 상세 내용: [5.4 채팅 API](#54-채팅-api-vllm-2가지-모델-선택-가능) 섹션 참조
+1. **Phase 5.2: 컨텍스트 절약 요약 기능** ✅ **부분 구현 완료** (2026-01-27)
+   - 구현: `app/services/context_manager.py`, Redis(선택), ChatSummary, `chat.py` get_summary, `evaluation.py` 요약 저장
+   - 미구현: 슬라이딩 윈도우, 80% 트리거, `manage_context` in chat
+   - 상세: `docs/구현_상태_요약_2026-01-26.md` §9.2
 
-2. **Phase 5.3: 동시 접속 제한** (필수, 미구현)
-   - 구현 위치: `server-b/backend/app/core/rate_limiter.py` (신규 생성)
-   - 구현 시기: Phase 5.1 완료 후 즉시
-   - 상세 내용: [5.4 채팅 API](#54-채팅-api-vllm-2가지-모델-선택-가능) 섹션 참조
-
-3. ~~**Phase 5.4: Frontend 턴 제한 제거**~~ ✅ **Phase 5.4: Frontend 턴 제한 설정화** (구현 완료)
+2. ~~**Phase 5.4: Frontend 턴 제한 제거**~~ ✅ **Phase 5.4: Frontend 턴 제한 설정화** (구현 완료)
    - 구현 위치: `components/chat-room.tsx`
    - 구현 완료: 2026-01-26
    - 상세 내용: `docs/구현_상태_요약_2026-01-26.md` 참조
@@ -64,6 +59,22 @@ lastUpdated: 2026-01-26
    - 캐릭터 API (CRUD 완전 구현)
    - Persona 파싱, Voice 미리보기, 접근성 개선 등 완전 구현
 
+8. **캐릭터 시스템 고도화** ✅ **구현 완료** (2026-01-26)
+   - 데이터 구조 세분화: 단순 텍스트(persona) 중심에서 10개 이상의 상세 필드 객체 구조로 전환
+     - 주요 필드: personality, appearance, likes, dislikes, speech_style, thoughts, features, habits, guidelines
+     - 기타 필드: gender, species, age, height, job, description, **worldview** (신규 추가)
+   - 파일 기반 관리 시스템: `public/characters/*.json` 파일을 동적으로 로드하는 API Route 구축
+   - AI 자동 완성 기능 고도화: `generateCharacterSpec()` 함수로 나무위키 수준의 상세 캐릭터 설정 자동 생성
+     - 작품명 필드 추가 (`source_work`): 원작 정보를 정확하게 반영
+   - 프론트엔드 UI/UX 혁신: CharacterCreationWizard 전면 개편
+     - Step 1 간소화: 이름, 카테고리, 작품명(출처) 3가지만 입력
+     - '다음' 버튼 클릭 시 AI가 자동으로 나머지 모든 상세 정보 생성
+     - Step 2 통합 편집: AI가 생성한 모든 정보를 한 화면에서 확인 및 수정
+     - AI 재생성 횟수 제한: 총 3회 생성 가능 (Step 1에서 1회 + Step 2에서 최대 2회)
+   - 시스템 최적화: 런타임 페르소나 빌드 시스템 (`buildSystemPersona()`) 도입
+   - 9종 캐릭터 데이터 마이그레이션 완료 (유즈, 헤르미온느, 토토로, 셜록, 나루토, 요다, 엘사, 간달프, 피카츄)
+   - **worldview 필드 추가**: 9종 캐릭터 모두에 작품/출처 기반 세계관 정보 추가
+
 8. **ChatRoom API 연동 및 TTS 통합** ✅ **구현 완료** (2026-01-26)
    - Backend Chat API 확장 (TTS 필드, scenario, character_id, session_id, audio_url)
    - Backend TTS 통합 (chat.py에서 자동 TTS 호출)
@@ -74,12 +85,43 @@ lastUpdated: 2026-01-26
    - 에러 처리 개선 (Toast, 재시도 메커니즘)
    - 턴 제한 설정화 (환경 변수 지원)
 
-9. **페르소나 전달 방식 개선** ✅ **구현 완료** (2026-01-26)
+10. **페르소나 전달 방식 개선** ✅ **구현 완료** (2026-01-26)
    - Backend `format_persona_for_roleplay()` 함수 구현
    - 역할극에 적합한 구조화된 페르소나 포맷팅
    - 시나리오 정보 포함 (opponent, situation, background)
    - 대화 컨텍스트 관리 (매 요청마다 전체 메시지 포함)
    - 로깅 기능 (개발 환경)
+
+11. **서버 에러 해결 및 백엔드 Gemini SDK 도입** ✅ **구현 완료** (2026-01-26)
+   - 프론트엔드 500 에러 해결: `/api/characters` API 비동기 처리 개선
+     - 동기식 파일 처리(`fs.readFileSync`) → 비동기식(`fs.promises`) 전환
+     - `Promise.all()`을 사용한 병렬 파일 로드
+     - 예외 처리 강화 (각 파일별 try-catch)
+   - 백엔드 Gemini SDK 도입: `google-generativeai` 패키지 추가 및 적용
+     - 공식 Python SDK 사용으로 코드 간소화 및 안정성 향상
+     - 비동기 API 호출 (`generate_content_async`)
+     - JSON Mode 지원 (`response_mime_type="application/json"`)
+     - System Instruction 지원
+   - 백엔드 SDK 고도화: Safety Settings 적용
+     - 기본값: `BLOCK_NONE` (무검열)
+     - 환경변수로 조절 가능 (`GOOGLE_SAFETY_THRESHOLD`)
+   - 환경변수 기반 설정:
+     - `GOOGLE_API_KEY`: Gemini API 키 (필수)
+     - `GOOGLE_API_MODEL`: 사용할 모델 (기본값: `gemini-1.5-flash`)
+     - `GOOGLE_SAFETY_THRESHOLD`: 안전 설정 (기본값: `BLOCK_NONE`)
+   - 참고 문서:
+     - [Gemini API 사용해보기](https://velog.io/@dyd1308/Gemini-api-%EC%82%AC%EC%9A%A9%ED%95%B4%EB%B3%B4%EA%B8%B0)
+     - [Gemini 모델 버전](https://ai.google.dev/gemini-api/docs/models?hl=ko#model-versions)
+
+12. **감독 모드** ✅ **구현 완료** (2026-01-27)
+   - Backend: `director_note`, `current_speaker`, `format_persona_for_actor`(제4의 벽), `[배우 1:]/[배우 2:]` 파싱
+   - Frontend: GameMode `"director"`, `secondCharacter`; `chat-room`, `character-select-modal`, `scenario-setup`, `script-preview`, `mode-select-modal`; 감독 중재 입력, 1턴=2메시지
+   - 참고: `madcamp-Screening-Humanity-FRONT/docs/감독_중재_기능_구현.md`, `감독_모드_턴_카운트_수정.md`
+
+13. **Phase 5.2 ContextManager + Redis** ✅ **부분 구현 완료** (2026-01-27)
+   - `context_manager.py`: Redis(선택) → DB(ChatSummary) → Memory; `get_summary`, `save_summary`, `summarize_dialogue`
+   - `chat.py`: get_summary → format_persona_for_actor(..., summary=summary); `evaluation.py`: summarize_dialogue → save_summary
+   - 미구현: 슬라이딩 윈도우, 80% 트리거, `manage_context` in chat
 
 **상세 구현 내역**: `docs/구현_상태_요약_2026-01-26.md` 참조
 
@@ -712,7 +754,6 @@ function handle_request(type, payload):
 - [x] Server B Backend에서 Server A 연결 수정 (Mock 제거, 실제 API 호출) ✅
 - [x] 프론트엔드와 백엔드 API 경로 통일 (Frontend를 `/api`로 변경) ✅
 - [ ] **컨텍스트 절약 요약 기능 구현** (필수, Phase 5.2)
-- [ ] **동시 접속 제한 구현** (필수, Phase 5.3)
 - [x] **Frontend 턴 제한 설정화** ✅ (구현 완료, Phase 5.4)
 - [ ] 엔드투엔드 채팅 테스트
 - [ ] TTS 음성 출력 테스트
@@ -1813,6 +1854,8 @@ LLM을 통해 캐릭터와 대화합니다.
     "background": "마법 세계 배경"
   },
   "session_id": "uuid-string",  // 선택, 자동 생성 (없으면 UUID 생성)
+  "director_note": "갑자기 화를 내라",  // 선택, 감독 모드 연출 지시 (2026-01-27)
+  "current_speaker": "헤르미온느",  // 선택, 감독 모드에서 현재 말할 캐릭터
   "temperature": 0.7,
   "max_tokens": 512,
   "model": "gemma-3-27b-it",
@@ -1831,6 +1874,8 @@ LLM을 통해 캐릭터와 대화합니다.
 | character_id     | string    | ❌   | 캐릭터 ID (voice_id 자동 추출)         |
 | scenario         | object    | ❌   | 시나리오 정보 (opponent, situation, background) |
 | session_id       | string    | ❌   | 세션 ID (없으면 자동 생성)             |
+| director_note    | string    | ❌   | 감독 모드 연출 지시 (2026-01-27)       |
+| current_speaker  | string    | ❌   | 감독 모드에서 현재 말할 캐릭터         |
 | temperature      | number    | ❌   | 창의성 (0.0~1.0, 기본: 0.7)            |
 | max_tokens       | number    | ❌   | 최대 응답 길이 (기본: 512)             |
 | model            | string    | ❌   | **케이스 B (Ollama, 기본)**: `"gemma-3-27b-it"`<br>**케이스 A (vLLM, 주석 처리됨)**: `"gemma-3-27b-it"` 또는 `"dolphin-2.9-8b"` |
@@ -1838,6 +1883,8 @@ LLM을 통해 캐릭터와 대화합니다.
 | tts_mode         | string    | ❌   | TTS 호출 방식 ("realtime" \| "delayed" \| "on_click") |
 | tts_delay_ms     | number    | ❌   | 지연 시간 (밀리초, delayed 모드에서 사용) |
 | tts_streaming_mode | number  | ❌   | GPT-SoVITS streaming_mode (0-3, 기본값: 0) |
+
+**⚠️ Frontend client `chat()` body**: `director_note`, `current_speaker`, `tts_enabled`, `tts_mode`, `tts_delay_ms`, `tts_streaming_mode`를 **전달하지 않음** (`lib/api/client.ts`의 `chat()`에서 `JSON.stringify` body에 미포함). Backend `ChatRequest`는 수신·처리 지원.
 
 응답(JSON) - 케이스 B (Ollama, 기본 사용):
 ```json
@@ -1863,12 +1910,13 @@ LLM을 통해 캐릭터와 대화합니다.
 5. TTS 통합 (임시 비활성화, 인증 제거로 인해 별도 `/api/tts` 엔드포인트 사용)
 
 **⚠️ 인증 제거 (2026-01-26)**:
-- `/api/chat`, `/api/chat/models` 인증 제거됨
+- `/api/chat` 인증 제거됨. `/api/chat/models`는 **Backend 라우트 미구현** (해당 엔드포인트 없음).
 - 모든 API가 인증 없이 바로 작동
 
-`GET /api/chat/models`
+`GET /api/chat/models` ⚠️ **미구현 (Backend 라우트 없음)**
 
 - 목적: 현재 LLM 서비스에서 사용 가능한 모델(또는 구성된 모델) 조회
+- **상태**: Backend `chat.py`에 라우트 없음. Frontend `chatApi.listModels()` 호출 시 404.
 - vLLM 특성상 “list”가 고정일 수 있으므로, 운영에서는 구성값을 반환하는 형태로 제공
 
 ### 5.5 TTS API
@@ -2759,8 +2807,7 @@ avatar-forge/
 │   │   │   │   └── context_manager.py # 컨텍스트 절약 요약 기능 (Phase 5.2, 필수)
 │   │   │   └── core/
 │   │   │       ├── config.py          # 설정/환경변수
-│   │   │       ├── security.py         # 인증/인가 (JWT 등, 추후)
-│   │   │       └── rate_limiter.py    # 동시 접속 제한 (Phase 5.3, 필수)
+│   │   │       └── security.py        # 인증/인가 (JWT 등, 추후)
 │   │   │   ├── models/
 │   │   │   │   └── database.py      # PostgreSQL ORM 모델
 │   │   │   └── core/
@@ -2891,12 +2938,6 @@ avatar-forge/
   - [ ] 자동 요약 로직 구현 (컨텍스트 80% 사용 시)
   - [ ] 요약 캐싱 구현
   - [ ] Backend API에 통합 (`chat.py`)
-- [ ] **Phase 5.3: 동시 접속 제한 구현 (필수, 미구현)**
-  - [ ] Redis 설정 (세션 카운터용)
-  - [ ] `ConcurrentUserLimiter` 구현 (`app/core/rate_limiter.py`)
-  - [ ] Middleware 또는 Dependency로 통합
-  - [ ] 환경 변수 설정 (`MAX_CONCURRENT_USERS=12`, 동시 접속 10-12명 지원)
-  - [ ] 503 에러 처리 테스트
 - [x] **Phase 5.4: Frontend 턴 제한 설정화** ✅ (구현 완료)
   - [x] `chat-room.tsx`에서 턴 제한 설정화 (환경 변수 지원) ✅
   - [x] 세션 관리 로직 추가 (세션 ID 생성/유지, `crypto.randomUUID()`) ✅
@@ -2911,7 +2952,6 @@ avatar-forge/
 - [ ] Phase 5 통합 테스트
   - [ ] 엔드투엔드 채팅 테스트 (Frontend → Backend → Server A vLLM)
   - [ ] 긴 대화 테스트 (30턴 이상, 요약 기능 검증)
-  - [ ] 동시 접속 제한 테스트 (20명 초과 시 503 에러)
   - [ ] TTS 음성 출력 테스트 (Frontend → Backend → Server A GPT-SoVITS)
   - [ ] 에러 핸들링 테스트
   - [ ] 부하 테스트 (선택사항)
@@ -2950,9 +2990,15 @@ avatar-forge/
 
 | 버전  | 날짜       | 변경 내용 |
 |------:|------------|----------|
+| 1.24.0 | 2026-01-27 | 감독 모드 및 Redis/ContextManager 반영 - 감독 모드(director_note, current_speaker, format_persona_for_actor, [배우 1/2]); Phase 5.2 부분 완료(ContextManager, Redis, ChatSummary, chat/evaluation) |
+| 1.25.0 | 2026-01-27 | Phase 5.3(동시 접속 제한) 계획·가이드·체크리스트·참조 전면 삭제 |
+| 1.26.0 | 2026-01-27 | BACK/FRONT 코드 검토 반영 — GET /api/chat/models, style, animations, /api/characters/generate 미구현; client chat body director_note/tts_* 미전달; DB create_all character·summary |
+| 1.23.0 | 2026-01-26 | 서버 에러 해결 및 백엔드 Gemini SDK 도입 - 프론트엔드 500 에러 해결 (/api/characters API 비동기 처리 개선), 백엔드 Gemini SDK 도입 (google-generativeai 패키지 추가 및 적용), 백엔드 SDK 고도화 (Safety Settings, JSON Mode 적용), 환경변수 기반 설정 (GOOGLE_API_KEY, GOOGLE_API_MODEL, GOOGLE_SAFETY_THRESHOLD), 참고 문서 추가 (Gemini API 사용 가이드 및 모델 버전 문서) |
+| 1.22.0 | 2026-01-26 | 캐릭터 생성 위저드 개편 - Step 1 간소화 (이름, 카테고리, 작품명 3가지만 입력), '다음' 버튼 클릭 시 AI 자동 생성, Step 2 통합 편집 (모든 정보 한 화면에서 수정), AI 재생성 횟수 제한 (총 3회), 작품명 필드 추가 (source_work), worldview 필드 추가 (9종 캐릭터 모두) |
+| 1.21.0 | 2026-01-26 | 캐릭터 시스템 고도화 작업 완료 - 데이터 구조 세분화 (persona → 10개 이상의 상세 필드), 파일 기반 관리 시스템 (public/characters/*.json API Route), AI 자동 완성 기능 고도화 (generateCharacterSpec), 프론트엔드 UI/UX 혁신 (CharacterCreationWizard 개편), 시스템 최적화 (페르소나 빌더 시스템), 9종 캐릭터 데이터 마이그레이션 완료 |
+| 1.20.0 | 2026-01-26 | 인증 제거 및 프롬프트 전달 수정 반영 - `/api/chat`, `/api/chat/models`, `/api/tts`, `/api/tts/voices`, `/api/generate`, `/api/characters/*` 모든 엔드포인트 인증 제거, 프론트엔드에서 persona/scenario/session_id/character_id 전달 확인, 백엔드에서 request.persona를 system 메시지로 포맷팅 확인 |
 | 1.19.0 | 2026-01-26 | 랜딩 페이지 로그아웃 기능 추가 - 사용자 정보 조회 API 추가 (`GET /api/auth/me`), 랜딩 페이지에 사용자 이름 및 로그아웃 버튼 표시, 인증 콜백에서 사용자 정보 자동 조회, 모든 문서 업데이트 |
 | 1.18.0 | 2026-01-26 | 로그인/로그아웃 시스템 통합 완료 - Backend JWT HttpOnly Cookie 설정, Frontend NextAuth.js 제거, 인증 콜백 라우트 구현, API 클라이언트 쿠키 전달 설정, 로그아웃 엔드포인트 추가, 모든 문서 업데이트 |
-| 1.20.0 | 2026-01-26 | 인증 제거 및 프롬프트 전달 수정 반영 - `/api/chat`, `/api/chat/models`, `/api/tts`, `/api/tts/voices`, `/api/generate`, `/api/characters/*` 모든 엔드포인트 인증 제거, 프론트엔드에서 persona/scenario/session_id/character_id 전달 확인, 백엔드에서 request.persona를 system 메시지로 포맷팅 확인 |
 | 1.17.0 | 2026-01-26 | Ollama 기준으로 API 구현 변경 - vLLM 코드 주석 처리, Ollama를 기본 LLM 서비스로 설정 (LLM_SERVICE 기본값: ollama), GPU_SERVER_URL 환경 변수 제거, chat.py Ollama 기준으로 재구현, 모든 문서 업데이트 |
 | 1.16.0 | 2026-01-26 | API 경로 통일 완료 - Frontend를 `/api`로 변경 (`lib/api/client.ts`), Backend는 이미 `/api` 사용 중 확인 완료 |
 | 1.15.0 | 2026-01-26 | Backend Mock 응답 제거 및 실제 API 호출 구현 완료 - chat.py 수정, vLLM/Ollama 분기 처리, 에러 처리 강화, session_id 지원, 환경 변수 기반 URL 설정 |
@@ -2961,7 +3007,7 @@ avatar-forge/
 | 1.12.0 | 2026-01-26 | Ollama 지원 추가: GGUF 모델 다운로드 방법 추가 (gemma-3-27b-it-UD-Q4_K_XL.gguf, ~16.8GB). docker-compose.yml 생성 (vLLM과 Ollama 선택 가능, 프로필 기반 실행). vLLM vs Ollama 비교 및 사용 가이드 추가. |
 | 1.11.0 | 2026-01-26 | 리버스 프록시 설정 정보 업데이트: vLLM 프록시 설정을 `172.17.0.1:8000` (Docker bridge 게이트웨이 IP, 컨테이너 내부 포트)로 통일. API 문서 엔드포인트 정보 추가 (`/docs`, `/redoc`, `/api/openapi.json`). 문서 간 정합성 개선. |
 | 1.10.0 | 2026-01-26 | 동시 접속 5명일 때 컨텍스트 길이 계산 추가: vLLM 공식 문서 기반으로 max_num_seqs=5일 때 max_model_len=8192 지원 가능 분석 추가. KV Cache 메모리 계산 및 옵션별 비교 (8192/6144/5120 토큰). |
-| 1.9.0 | 2026-01-26 | Phase 5 핵심 기능 추가: 컨텍스트 절약 요약 기능 구현 계획 (Phase 5.2, 필수), 동시 접속 제한 구현 계획 (Phase 5.3, 최대 20명, 필수), Frontend 턴 제한 제거 (Phase 5.4, 무제한 대화 지원). 각 문서에 상세 구현 가이드 추가 (FINALFINAL.md, PHASE5_SETUP.md, Backend_프로젝트_현황_명세서.md, Front_PROJECT_SPECIFICATION.md). 컨텍스트 길이 최적화 분석 추가 (4096 권장, 요약 기능 필수). |
+| 1.9.0 | 2026-01-26 | Phase 5 핵심 기능 추가: 컨텍스트 절약 요약 기능 구현 계획 (Phase 5.2, 필수), Frontend 턴 제한 제거 (Phase 5.4, 무제한 대화 지원). 각 문서에 상세 구현 가이드 추가 (FINALFINAL.md, PHASE5_SETUP.md, Backend_프로젝트_현황_명세서.md, Front_PROJECT_SPECIFICATION.md). 컨텍스트 길이 최적화 분석 추가 (4096 권장, 요약 기능 필수). |
 | 1.8.0 | 2026-01-26 | Phase 5 진행 상황 업데이트: vLLM 및 GPT-SoVITS 설치 완료 상태 반영. 다음 단계 가이드 추가 (vLLM 서버 실행, GPT-SoVITS WebAPI 구동, NPM 설정, Backend 연결 수정, API 경로 통일, TTS API 연동, 통합 테스트). Backend 및 Frontend 구현 완료 상태 명시. |
 | 1.7.0 | 2026-01-24 | 기본 LLM 모델을 GPT-OSS-20B에서 Gemma 3 27B IT로 변경. 멀티모달 지원, 128K 컨텍스트 윈도우, 용량 정보 업데이트 (~50-55GB, 양자화 시 ~13-15GB). |
 | 1.6.0 | 2026-01-24 | 모델 용량 분석 추가 및 최적 배치 전략 제안. Server A에 100GB 여유 공간이 있을 경우 모든 모델을 Server A에 직접 저장하는 것을 권장 (총 모델 용량 ~50-60GB). HTTP API 다운로드 방식은 Server A 스토리지 부족 시 대안으로 제시. |

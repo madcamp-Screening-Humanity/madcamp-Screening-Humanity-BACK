@@ -137,6 +137,7 @@ async def get_current_user_info(
         "username": current_user.username,
         "picture": current_user.picture,
         "provider": current_user.provider,
+        "is_admin": settings.is_admin(current_user.email),
     }
 
 @router.post("/logout")

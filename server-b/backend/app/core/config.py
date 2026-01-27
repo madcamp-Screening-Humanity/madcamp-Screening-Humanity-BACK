@@ -77,6 +77,21 @@ class Settings(BaseSettings):
     TTS_MAX_FILE_SIZE: int = 52428800  # 생성된 오디오 파일 크기 제한 (바이트, 기본 50MB)
     TTS_SSL_VERIFY: bool = False  # SSL 인증서 검증 (개발 환경: False, 프로덕션: True)
     
+    # 관리자 설정
+    # 관리자 권한이 있는 이메일 목록 (쉼표로 구분)
+    # 예: "admin@example.com,manager@example.com"
+    ADMIN_EMAILS: str = ""
+    
+    def is_admin(self, email: str) -> bool:
+        """이메일이 관리자 목록에 있는지 확인"""
+        if not self.ADMIN_EMAILS:
+            return False
+        admin_list = [e.strip().lower() for e in self.ADMIN_EMAILS.split(",") if e.strip()]
+        return email.lower() in admin_list
+    
+    # Server A 파일 스캔 API (GPT-SoVITS 모델/음성 파일 조회용)
+    SERVER_A_FILES_API_URL: str = "http://gpusovitsapi.duckdns.org:10001"
+    
     # Paths (Configurable for Windows/Ubuntu)
     SHARED_MODELS_DIR: str = "/mnt/shared_models"
     USER_ASSETS_DIR: str = "/mnt/user_assets"

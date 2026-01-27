@@ -40,7 +40,7 @@ def load_voices_config():
     return _voices_config
 
 def get_ref_audio_path(voice_id: Optional[str] = None) -> Optional[str]:
-    """voice_id로 ref_audio_path 조회"""
+    """voice_id로 ref_audio_path 조회 (JSON 파일 기반 - 레거시)"""
     config = load_voices_config()
     
     if voice_id is None:
@@ -50,6 +50,58 @@ def get_ref_audio_path(voice_id: Optional[str] = None) -> Optional[str]:
         if voice.get("id") == voice_id:
             return voice.get("ref_audio_path")
     
+    return None
+
+
+async def get_voice_from_db(voice_id: str, db: AsyncSession) -> Optional[Dict[str, Any]]:
+    """
+    DB에서 voice_id로 음성 정보 조회
+    
+    Returns:
+        음성 정보 딕셔너리 또는 None
+    """
+    from app.models.voice import Voice
+    
+    result = await db.execute(
+        select(Voice).where(Voice.id == voice_id, Voice.is_active == True)
+    )
+    voice = result.scalar_one_or_none()
+    
+    if voice:
+        return {
+            "id": voice.id,
+            "name": voice.name,
+            "ref_audio_path": voice.ref_audio_path,
+            "prompt_text": voice.prompt_text,
+            "prompt_lang": voice.prompt_lang,
+            "language": voice.language
+        }
+    return None
+
+
+async def get_default_voice_from_db(db: AsyncSession) -> Optional[Dict[str, Any]]:
+    """
+    DB에서 기본 음성 조회
+    
+    Returns:
+        기본 음성 정보 딕셔너리 또는 None
+    """
+    from app.models.voice import Voice
+    
+    result = await db.execute(
+        select(Voice).where(Voice.is_default == True, Voice.is_active == True)
+    )
+    voice = result.scalar_one_or_none()
+    
+    if voice:
+        return {
+            "id": voice.id,
+            "name": voice.name,
+            "ref_audio_path": voice.ref_audio_path,
+            "prompt_text": voice.prompt_text,
+            "prompt_lang": voice.prompt_lang,
+            "language": voice.language
+        }
     return None
 
 
@@ -382,35 +434,39 @@ async def synthesize(request: TTSRequest):
 
 
 @router.get("/tts/voices")
-async def list_voices():
+async def list_voices(db: AsyncSession = Depends(get_db)):
     """
     사용 가능한 음성 목록을 조회합니다.
-    현재는 Mock 응답을 반환합니다. (나중에 실제 구현 예정)
+    DB에서 활성화된 음성 목록을 반환합니다.
     """
-    config = load_voices_config()
+    from app.models.voice import Voice
+    
+    # DB에서 활성화된 음성 조회
+    result = await db.execute(
+        select(Voice).where(Voice.is_active == True).order_by(Voice.is_default.desc(), Voice.name)
+    )
+    db_voices = result.scalars().all()
     
     voices = []
-    for voice in config.get("voices", []):
-        voices.append({
-            "id": voice.get("id"),
-            "name": voice.get("name", voice.get("id")),
-            "language": voice.get("language", "ko"),
-            "description": voice.get("description", "")
-        })
+    default_voice_id = None
     
-    # 기본 음성이 없으면 추가
-    if not voices:
+    for voice in db_voices:
         voices.append({
-            "id": "default",
-            "name": "기본 음성",
-            "language": "ko",
-            "description": "기본 한국어 음성"
+            "id": voice.id,
+            "name": voice.name,
+            "language": voice.language,
+            "description": voice.description or ""
         })
+        if voice.is_default:
+            default_voice_id = voice.id
+    
+    # DB에 음성이 없으면 빈 목록 반환 (기본 음성 없음)
+    # 사용자가 직접 음성을 등록해야 함
     
     return {
         "success": True,
         "data": {
             "voices": voices,
-            "default_voice_id": config.get("default_voice_id", "default")
+            "default_voice_id": default_voice_id
         }
     }

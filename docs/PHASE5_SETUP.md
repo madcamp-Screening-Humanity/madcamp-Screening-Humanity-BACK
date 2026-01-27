@@ -20,23 +20,16 @@
 - ✅ 로그인/로그아웃 시스템 통합 완료 ✅
 - ⚠️ Frontend 연동 (진행 중)
 
-### Phase 5.2: 컨텍스트 절약 요약 기능 (필수, 미구현)
-- **구현 시기**: Phase 5.1 완료 후 즉시
-- **우선순위**: 높음 (필수)
-- **구현 위치**: `server-b/backend/app/services/context_manager.py` (신규 생성)
-- **상세 내용**: [Phase 5.2-5.4 구현 가이드 - Phase 5.2](#51-phase-52-컨텍스트-절약-요약-기능-구현) 섹션 참조
-
-### Phase 5.3: 동시 접속 제한 (필수, 미구현)
-- **구현 시기**: Phase 5.1 완료 후 즉시
-- **우선순위**: 높음 (필수)
-- **구현 위치**: `server-b/backend/app/core/rate_limiter.py` (신규 생성)
-- **상세 내용**: [Phase 5.2-5.4 구현 가이드 - Phase 5.3](#52-phase-53-동시-접속-제한-구현) 섹션 참조
+### Phase 5.2: 컨텍스트 절약 요약 기능 ✅ **부분 구현 완료** (2026-01-27)
+- **구현**: `context_manager.py`, Redis(선택), ChatSummary, `chat.py` get_summary, `evaluation.py` 요약 저장
+- **미구현**: 슬라이딩 윈도우, 80% 트리거, `manage_context` in chat
+- **상세**: `docs/구현_상태_요약_2026-01-26.md` §9.2, [Phase 5.2-5.4 구현 가이드 - Phase 5.2](#51-phase-52-컨텍스트-절약-요약-기능-구현)
 
 ### Phase 5.4: Frontend 턴 제한 설정화 ✅ **구현 완료**
 - **구현 시기**: Phase 5.1 완료 후
 - **구현 위치**: `components/chat-room.tsx`
 - **구현 상태**: ✅ **구현 완료** (2026-01-26)
-- **상세 내용**: [Phase 5.2-5.4 구현 가이드 - Phase 5.4](#53-phase-54-frontend-턴-제한-설정화-구현-완료) 섹션 참조
+- **상세 내용**: [Phase 5.2-5.4 구현 가이드 - Phase 5.4](#52-phase-54-frontend-턴-제한-설정화-구현-완료) 섹션 참조
 
 ### 최근 구현 완료 기능 (2026-01-26)
 - ✅ **ChatRoom API 연동 및 TTS 통합** (7단계)
@@ -52,12 +45,20 @@
 - ✅ **TTS 음성 목록 조회 API** (`GET /api/tts/voices`)
   - 구현 완료 (2026-01-26)
 - ✅ **인증 제거 및 프롬프트 전달 수정** (2026-01-26)
-  - `/api/chat`, `/api/chat/models` 인증 제거
+  - `/api/chat` 인증 제거. **참고**: `GET /api/chat/models`는 Backend 라우트 미구현 (`chat.py`에 해당 엔드포인트 없음).
   - `/api/tts`, `/api/tts/voices` 인증 제거
   - `/api/generate` 인증 제거 (user_id="anonymous")
   - `/api/characters/*` 모든 엔드포인트 인증 제거
   - 프론트엔드에서 persona, scenario, session_id, character_id 전달 확인
   - 백엔드에서 request.persona를 system 메시지로 포맷팅 확인
+- ✅ **서버 에러 해결 및 백엔드 Gemini SDK 도입** (2026-01-26)
+  - 프론트엔드 500 에러 해결: `/api/characters` API 비동기 처리 개선
+  - 백엔드 Gemini SDK 도입: `google-generativeai` 패키지 추가 및 적용
+  - 백엔드 SDK 고도화: Safety Settings, JSON Mode 적용
+  - 환경변수 기반 설정: GOOGLE_API_KEY, GOOGLE_API_MODEL, GOOGLE_SAFETY_THRESHOLD
+  - 참고 문서:
+    - [Gemini API 사용해보기](https://velog.io/@dyd1308/Gemini-api-%EC%82%AC%EC%9A%A9%ED%95%B4%EB%B3%B4%EA%B8%B0)
+    - [Gemini 모델 버전](https://ai.google.dev/gemini-api/docs/models?hl=ko#model-versions)
 
 **참고 자료**:
 - GPT-SoVITS 포트 구분 및 적용법: [Notion 문서](https://www.notion.so/1d6d3e41a6c0809b8f6afb53f7b985c3?v=1d6d3e41a6c081928e59000c47330846&source=copy_link), [Arca.live 게시판들](https://arca.live/b/characterai/114903135?)
@@ -70,7 +71,6 @@
 - LLM(vLLM)과 TTS(GPT-SoVITS)를 연동하여 캐릭터와 텍스트/음성으로 대화할 수 있는 기능 구현
 - LLM 모델: Gemma 3 27B IT (기본)
 - **무제한 대화 지원**: 턴 제한 설정화 (환경 변수 지원), 컨텍스트 절약 요약 기능으로 긴 대화 지원 (Phase 5.2에서 구현 예정)
-- **동시 접속 제한**: 최대 20명 동시 접속 (추후 증가 예정)
 
 ### 1.2 Phase 5 세부 단계 (2026-01-26)
 
@@ -80,18 +80,9 @@
 - Backend API 연동
 - Frontend 연동
 
-**Phase 5.2: 컨텍스트 절약 요약 기능 (Phase 5.1 완료 후 즉시, 필수, 미구현)**
-- Redis 또는 메모리 캐시 설정
-- `ContextManager` 서비스 구현
-- 세션 기반 히스토리 관리
-- 자동 요약 로직 구현
-- Backend API에 통합
-
-**Phase 5.3: 동시 접속 제한 (Phase 5.1 완료 후 즉시, 필수, 미구현)**
-- Redis 설정 (세션 카운터용)
-- `ConcurrentUserLimiter` 구현
-- Middleware 또는 Dependency로 통합
-- 환경 변수 설정 (`MAX_CONCURRENT_USERS=20`)
+**Phase 5.2: 컨텍스트 절약 요약 기능** ✅ **부분 구현 완료** (2026-01-27)
+- [x] Redis(선택), `ContextManager`, ChatSummary, `chat.py` get_summary, `evaluation.py` 요약 저장
+- [ ] 슬라이딩 윈도우, 80% 트리거, `manage_context` in chat
 
 **Phase 5.4: Frontend 턴 제한 설정화** ✅ **구현 완료** (2026-01-26)
 - `chat-room.tsx`에서 턴 제한 설정화 (환경 변수 지원)
@@ -1222,7 +1213,6 @@ import httpx
 import os
 import uuid
 from app.services.context_manager import ContextManager
-from app.core.rate_limiter import ConcurrentUserLimiter
 from app.api.deps import get_current_user
 
 router = APIRouter()
@@ -1232,7 +1222,6 @@ SERVER_A_NPM_URL = os.getenv("SERVER_A_NPM_URL", "https://server-a.local")
 
 # 서비스 인스턴스
 context_manager = ContextManager()
-user_limiter = ConcurrentUserLimiter()
 
 class Message(BaseModel):
     role: str
@@ -1253,20 +1242,17 @@ async def chat(
 ):
     """캐릭터와 대화 (무제한 대화 지원, 자동 요약)"""
     try:
-        # 1. 동시 접속 제한 확인
-        await user_limiter.check_limit(current_user.id)
-        
-        # 2. 세션 ID 생성/조회
+        # 1. 세션 ID 생성/조회
         session_id = request.session_id or str(uuid.uuid4())
         
-        # 3. 컨텍스트 관리 (자동 요약 포함)
+        # 2. 컨텍스트 관리 (자동 요약 포함)
         optimized_messages = await context_manager.manage_context(
             session_id=session_id,
             new_messages=request.messages,
             persona=request.persona
         )
         
-        # 4. Server A의 LLM 서비스 호출
+        # 3. Server A의 LLM 서비스 호출
         async with httpx.AsyncClient(verify=False) as client:
             response = await client.post(
                 f"{SERVER_A_NPM_URL}/llm/chat",
@@ -1481,88 +1467,7 @@ async def chat(request: ChatRequest, current_user = Depends(get_current_user)):
     # ... 나머지 코드 ...
 ```
 
-### 5.2 Phase 5.3: 동시 접속 제한 구현
-
-**구현 위치**: `server-b/backend/app/core/rate_limiter.py` (신규 생성)
-
-**구현 시기**: Phase 5.1 완료 후 즉시 구현 (우선순위: 높음, 필수 기능)
-
-**필수 의존성**: Redis (Phase 5.2와 동일)
-
-**구현 단계**:
-
-1. **ConcurrentUserLimiter 생성**:
-```python
-# server-b/backend/app/core/rate_limiter.py
-from fastapi import HTTPException, status
-import redis.asyncio as redis
-import os
-
-class ConcurrentUserLimiter:
-    def __init__(self):
-        self.redis_client = redis.from_url(
-            os.getenv("REDIS_URL", "redis://localhost:6379")
-        )
-        self.max_users = int(os.getenv("MAX_CONCURRENT_USERS", "20"))
-        self.key_prefix = "active_sessions:"
-        self.session_ttl = 3600  # 1시간
-        
-    async def check_limit(self, user_id: str) -> bool:
-        """동시 접속 제한 확인"""
-        active_count = await self.get_active_count()
-        
-        if active_count >= self.max_users:
-            is_existing = await self.is_user_active(user_id)
-            if not is_existing:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail=f"최대 동시 접속자 수({self.max_users}명)에 도달했습니다. 잠시 후 다시 시도해주세요."
-                )
-        
-        await self.register_session(user_id)
-        return True
-    
-    async def get_active_count(self) -> int:
-        """현재 활성 세션 수 조회"""
-        keys = await self.redis_client.keys(f"{self.key_prefix}*")
-        return len(keys)
-    
-    async def register_session(self, user_id: str):
-        """세션 등록"""
-        await self.redis_client.setex(
-            f"{self.key_prefix}{user_id}",
-            self.session_ttl,
-            "active"
-        )
-    
-    async def release_session(self, user_id: str):
-        """세션 해제"""
-        await self.redis_client.delete(f"{self.key_prefix}{user_id}")
-```
-
-2. **chat.py에 통합**:
-```python
-# server-b/backend/app/api/chat.py 수정
-from app.core.rate_limiter import ConcurrentUserLimiter
-
-user_limiter = ConcurrentUserLimiter()
-
-@router.post("/chat")
-async def chat(request: ChatRequest, current_user = Depends(get_current_user)):
-    # 동시 접속 제한 확인
-    await user_limiter.check_limit(current_user.id)
-    
-    # ... 나머지 코드 ...
-```
-
-3. **환경 변수 설정**:
-```bash
-# server-b/backend/.env
-MAX_CONCURRENT_USERS=20
-REDIS_URL=redis://localhost:6379
-```
-
-### 5.3 Phase 5.4: Frontend 턴 제한 설정화 ✅ **구현 완료**
+### 5.2 Phase 5.4: Frontend 턴 제한 설정화 ✅ **구현 완료**
 
 **구현 위치**: `components/chat-room.tsx`
 
@@ -2365,6 +2270,7 @@ sed -i 's/\r$//' scripts/server-a/*.sh
 
 | 버전 | 날짜 | 변경 내용 |
 |------|------|----------|
+| 1.7 | 2026-01-27 | BACK/FRONT 코드 검토 반영 — GET /api/chat/models Backend 라우트 미구현 명시 |
 | 1.6 | 2026-01-26 | 로그인/로그아웃 시스템 통합 완료 - Backend JWT HttpOnly Cookie 설정, Frontend NextAuth.js 제거, 인증 콜백 라우트 구현, API 클라이언트 쿠키 전달 설정, 로그아웃 엔드포인트 추가 |
 | 1.5 | 2026-01-26 | Ollama 기준으로 API 구현 변경 - vLLM 코드 주석 처리, Ollama를 기본 LLM 서비스로 설정 (LLM_SERVICE 기본값: ollama), GPU_SERVER_URL 환경 변수 제거, chat.py Ollama 기준으로 재구현, 모든 문서 업데이트 |
 | 1.4 | 2026-01-26 | API 경로 통일 완료 - Frontend를 `/api`로 변경 (`lib/api/client.ts`), Backend는 이미 `/api` 사용 중 확인 완료 |

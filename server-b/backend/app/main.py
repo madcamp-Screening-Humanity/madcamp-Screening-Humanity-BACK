@@ -14,7 +14,7 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         # Create tables
         # Import models so they are registered
-        from app.models import user, generation, character, audio, summary
+        from app.models import user, generation, character, audio, summary, voice
         await conn.run_sync(Base.metadata.create_all)
     yield
     # Shutdown
@@ -56,6 +56,9 @@ app.include_router(chat.router, prefix=f"{settings.API_V1_STR}", tags=["chat"])
 
 from app.api import tts
 app.include_router(tts.router, prefix=f"{settings.API_V1_STR}", tags=["tts"])
+
+from app.api import voices
+app.include_router(voices.router, prefix=f"{settings.API_V1_STR}", tags=["voices"])
 
 from app.api import ai
 app.include_router(ai.router, prefix=f"{settings.API_V1_STR}/ai", tags=["ai"])

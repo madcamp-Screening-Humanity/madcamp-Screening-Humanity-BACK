@@ -1,7 +1,7 @@
 # 데이터베이스 스키마 명세서
 
 **작성일**: 2026-01-26  
-**버전**: 1.0  
+**버전**: 1.3  
 **프로젝트명**: Avatar Forge (인생 극장)
 
 ---
@@ -39,6 +39,7 @@
 2. `characters` - 캐릭터 정보
 3. `generation_jobs` - 생성 작업 추적
 4. `audio_files` - TTS 오디오 파일 메타데이터
+5. `chat_summaries` - 세션별 대화 요약 (Phase 5.2 ContextManager, 2026-01-27)
 
 ---
 
@@ -72,7 +73,7 @@ AsyncSessionLocal = async_sessionmaker(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
-        from app.models import user, generation, audio
+        from app.models import user, generation, character, audio, summary
         await conn.run_sync(Base.metadata.create_all)
     yield
 ```
@@ -126,9 +127,9 @@ async def lifespan(app: FastAPI):
 | `user_id` | String(36) | FK(users.id), NULLABLE | 소유자 ID (사전설정 캐릭터는 NULL) |
 | `name` | String(100) | NOT NULL | 캐릭터 이름 |
 | `description` | Text | NULLABLE | 캐릭터 설명 |
-| `persona` | Text | NULLABLE | 캐릭터 페르소나 (성격, 말투 등) ✅ **추가됨** |
+| `persona` | Text | NULLABLE | 캐릭터 페르소나 (성격, 말투 등) ✅ **추가됨** (⚠️ **사용 중단**: 런타임 빌드로 대체) |
 | `voice_id` | String(50) | NULLABLE, DEFAULT="default" | TTS 음성 ID ✅ **추가됨** |
-| `character` | Text | NULLABLE | 캐릭터 속성 (JSON 문자열) ✅ **추가됨** |
+| `character` | Text | NULLABLE | 캐릭터 속성 (JSON 문자열) ✅ **추가됨** (⚠️ **확장됨**: 상세 필드 구조 포함) |
 | `is_preset` | Boolean | NOT NULL, DEFAULT=False | 사전설정 캐릭터 여부 |
 | `category` | String(50) | NULLABLE | 카테고리 (애니메이션, 소설, 영화 등) |
 | `tags` | Text | NULLABLE | 태그 목록 (JSON 문자열) |
@@ -149,11 +150,24 @@ async def lifespan(app: FastAPI):
 
 #### 최근 업데이트 (2026-01-26)
 
+**초기 추가**:
 - ✅ `persona` 필드 추가: 캐릭터 페르소나 설명 (텍스트)
 - ✅ `voice_id` 필드 추가: TTS 음성 ID (기본값: "default")
-- ⚠️ `character` 필드: 현재 모델에는 없으나 API 요청/응답에서 사용 가능 (JSON 문자열)
+- ✅ `character` 필드: 캐릭터 속성 (JSON 문자열)
 
-**상세 구현 내역**: `docs/구현_상태_요약_2026-01-26.md` 참조
+**캐릭터 시스템 고도화 (2026-01-26)**:
+- ✅ **데이터 구조 세분화**: `character` 필드에 상세 필드 구조 저장
+  - 주요 필드: `personality`, `appearance`, `likes`, `dislikes`, `speech_style`, `thoughts`, `features`, `habits`, `guidelines`
+  - 기타 필드: `gender`, `species`, `age`, `height`, `job`, `description`, `worldview` (신규 추가)
+- ⚠️ **`persona` 필드 사용 중단**: 런타임 페르소나 빌드 시스템으로 대체
+  - `lib/utils/persona-builder.ts`의 `buildSystemPersona()` 함수로 동적 생성
+  - 저장 시 무거운 persona 문자열 대신 상세 필드만 저장하여 데이터 중복 제거
+- ✅ **파일 기반 관리**: `public/characters/*.json` 파일에 상세 필드 구조로 저장
+  - 9종 캐릭터 마이그레이션 완료 (유즈, 헤르미온느, 토토로, 셜록, 나루토, 요다, 엘사, 간달프, 피카츄)
+  - 자동 마이그레이션: 파일 로드 시 `persona` 필드 자동 제거
+  - **worldview 필드 추가** (2026-01-26): 9종 캐릭터 모두에 작품/출처 기반 세계관 정보 추가
+
+**상세 구현 내역**: `docs/구현_상태_요약_2026-01-26.md`의 "5. 캐릭터 시스템 고도화 작업 완료 내역" 섹션 참조
 
 #### 특이사항
 
@@ -371,19 +385,22 @@ CREATE TABLE messages (
 
 ---
 
-### 3.5 세션 관리 (향후 구현 예정)
+### 3.5 chat_summaries 테이블 ✅ **구현됨** (2026-01-27)
 
-**Phase 5.2에서 구현 예정**
+**모델 파일**: `app/models/summary.py`  
+**용도**: Phase 5.2 ContextManager — 세션별 대화 요약 저장 (Redis → DB → Memory)
 
-**용도**: 세션별 대화 히스토리 저장 및 컨텍스트 절약 요약 기능
+#### 스키마
 
-**예상 구조** (Redis 기반):
-- 세션 ID: UUID 문자열
-- 대화 히스토리: JSON 배열 (메시지 배열)
-- 토큰 수: 현재 컨텍스트 토큰 수
-- 요약 정보: 이전 턴 요약 텍스트 (슬라이딩 윈도우 전략)
+| 필드명 | 타입 | 제약조건 | 설명 |
+|--------|------|----------|------|
+| `session_id` | String(100) | PK, INDEX | 세션 ID |
+| `summary` | Text | NULLABLE | 요약 텍스트 |
+| `updated_at` | DateTime(timezone=True) | server_default, onupdate | 수정 시간 |
 
-**참고 문서**: `docs/PHASE5_SETUP.md`의 "Phase 5.2: 컨텍스트 절약 요약 기능 구현" 섹션
+**연동**: `context_manager.get_summary` / `save_summary`, `chat.py` (get_summary → format_persona_for_actor), `evaluation.py` (summarize_dialogue → save_summary)
+
+**참고**: Redis는 선택(캐시), DB가 영구 저장. 슬라이딩 윈도우/80% 트리거는 미통합.
 
 ---
 
@@ -735,7 +752,7 @@ CREATE INDEX idx_generation_jobs_job_type ON generation_jobs(job_type);
 
 ### 9.1 현재 상태
 
-- ✅ **4개 테이블 구현됨**: users, characters, generation_jobs, audio_files
+- ✅ **5개 테이블 구현됨**: users, characters, generation_jobs, audio_files, **chat_summaries** (2026-01-27)
 - ❌ **2개 테이블 누락**: chat_sessions, messages (문서에만 존재)
 - ⚠️ **Frontend-Backend 동기화 없음**: ChatHistory는 localStorage에만 저장
 
@@ -761,6 +778,7 @@ CREATE INDEX idx_generation_jobs_job_type ON generation_jobs(job_type);
 - `app/models/user.py` - User 모델
 - `app/models/generation.py` - GenerationJob, Character 모델
 - `app/models/audio.py` - AudioFile 모델
+- `app/models/summary.py` - ChatSummary 모델 (Phase 5.2 ContextManager)
 
 ### B. 관련 설정 파일
 
@@ -776,6 +794,27 @@ CREATE INDEX idx_generation_jobs_job_type ON generation_jobs(job_type);
 
 ---
 
-**문서 버전**: 1.0  
+**문서 버전**: 1.5  
+**최종 업데이트**: 2026-01-27  
+**변경 이력**:
+- v1.5 (2026-01-27): main.py lifespan 인용 수정 — `from app.models import`에 character, summary 추가 (create_all과 일치)
+- v1.4 (2026-01-27): chat_summaries 테이블 추가 (Phase 5.2 ContextManager)
+- v1.3 (2026-01-26): 서버 에러 해결 및 백엔드 Gemini SDK 도입 반영
+  - 프론트엔드 500 에러 해결: `/api/characters` API 비동기 처리 개선
+  - 백엔드 Gemini SDK 도입: `google-generativeai` 패키지 추가 및 적용
+  - 백엔드 SDK 고도화: Safety Settings, JSON Mode 적용
+  - 환경변수 기반 설정: GOOGLE_API_KEY, GOOGLE_API_MODEL, GOOGLE_SAFETY_THRESHOLD
+- v1.2 (2026-01-26): 캐릭터 생성 위저드 개편 및 worldview 필드 추가 반영
+  - Step 1 간소화 (이름, 카테고리, 작품명 3가지만 입력)
+  - '다음' 버튼 클릭 시 AI 자동 생성
+  - Step 2 통합 편집 (모든 정보 한 화면에서 수정)
+  - AI 재생성 횟수 제한 (총 3회)
+  - worldview 필드 추가 (9종 캐릭터 모두)
+- v1.1 (2026-01-26): 캐릭터 시스템 고도화 작업 반영
+  - 데이터 구조 세분화 (persona → 10개 이상의 상세 필드)
+  - 런타임 페르소나 빌드 시스템 도입
+  - 파일 기반 관리 시스템 (public/characters/*.json)
+  - 9종 캐릭터 데이터 마이그레이션 완료
+- v1.0 (2026-01-26): 초기 문서 작성  
 **최종 수정일**: 2026-01-26  
 **작성자**: AI Assistant
