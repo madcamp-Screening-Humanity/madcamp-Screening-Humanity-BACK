@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api"
     
     # CORS
-    BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
+    BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = ["http://localhost:3000"]
 
     @validator("BACKEND_CORS_ORIGINS", pre=True)
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
@@ -40,8 +40,14 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/auth/google/callback"
     
+<<<<<<< HEAD
+    # AI API Keys
+    GEMINI_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
+=======
     # Frontend URL (OAuth 콜백 리다이렉트용)
     FRONTEND_URL: str = "http://localhost:3000"
+>>>>>>> 6fe448cb8225155864a351628994e82378c14e33
 
     # LLM 서비스 설정
     # "vllm" 또는 "ollama" 중 선택 (동시 실행 불가, VRAM 제약)
