@@ -14,11 +14,7 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         # Create tables
         # Import models so they are registered
-<<<<<<< HEAD
-        from app.models import user, generation, character
-=======
-        from app.models import user, generation, audio
->>>>>>> 6fe448cb8225155864a351628994e82378c14e33
+        from app.models import user, generation, character, audio
         await conn.run_sync(Base.metadata.create_all)
     yield
     # Shutdown
@@ -76,7 +72,6 @@ async def root():
 @app.get(f"{settings.API_V1_STR}/system/health")
 @app.get("/api/health") # Legacy/Direct health
 async def health():
-<<<<<<< HEAD
     return {"success": True, "data": {"status": "healthy"}}
 
 @app.get(f"{settings.API_V1_STR}/system/status")
@@ -88,9 +83,7 @@ async def system_status():
             "version": "1.0.0",
             "gpu_server": "connected"
         }
-=======
-    return {"status": "healthy"}
-
+    }
 
 @app.get("/api/test")
 async def test_connection():
@@ -99,5 +92,4 @@ async def test_connection():
         "status": "connected",
         "message": "백엔드 서버에 정상적으로 연결되었습니다.",
         "cors_origins": [str(origin) for origin in settings.BACKEND_CORS_ORIGINS] if settings.BACKEND_CORS_ORIGINS else ["*"]
->>>>>>> 6fe448cb8225155864a351628994e82378c14e33
     }

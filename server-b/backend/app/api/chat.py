@@ -7,7 +7,7 @@ import logging
 from app.core.config import settings
 from app.api.deps import get_db
 from app.models.user import User
-from app.models.generation import Character
+from app.models.character import Character
 from app.core.llm import call_llm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
