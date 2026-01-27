@@ -7,25 +7,37 @@ from app.models.user import User
 
 router = APIRouter()
 
+# ============ 스토리 생성 API ============
 class StoryGenerationRequest(BaseModel):
+    """스토리 생성 요청 모델"""
     situation: str = Field(..., description="사용자가 입력한 짧은 상황")
-    user_name: Optional[str] = Field(None, description="사용자 이름")
-    character_name: Optional[str] = Field(None, description="상대 캐릭터 이름")
+    opponent_name: str = Field(None, description="상대방 캐릭터 이름")
+    character_persona: str = Field(None, description="캐릭터 페르소나 설정")
 
 class StoryGenerationResponse(BaseModel):
-    success: bool
-    data: Dict[str, Any]
+    """스토리 생성 응답 모델"""
+    plot: str
 
 @router.post("/generate/story")
 async def generate_story(
     request: StoryGenerationRequest,
-    # current_user: User = Depends(get_current_user) # 필요시 인증 추가
 ):
     """
     사용자의 상황 입력을 바탕으로 드라마틱한 줄거리 생성
     """
-    user_n = request.user_name or "사용자"
-    char_n = request.character_name or "상대방"
+    
+    # 페르소나 정보가 있으면 활용, 없으면 기본값
+    persona_context = ""
+    if request.character_persona:
+        persona_context = f"\n\n[주인공 캐릭터 설정]\n{request.character_persona}"
+    
+    opponent_context = ""
+    if request.opponent_name:
+        opponent_context = f"\n\n[상대방 캐릭터]\n이름: {request.opponent_name}"
+
+    # 주인공/상대방 이름 설정
+    user_n = "나"
+    char_n = request.opponent_name or "상대방"
     
     system_prompt = (
         "당신은 드라마와 영화의 전문 시나리오 작가입니다. "
@@ -33,10 +45,10 @@ async def generate_story(
         "[지침]\n"
         f"1. 반드시 주어진 인물 이름인 '{user_n}'(나/주인공)와 '{char_n}'(상대역)만 사용하세요. 절대 다른 이름을 지어내지 마세요.\n"
         "2. 전체적인 분위기는 선택한 상황에 맞추되, 인물들 간의 갈등이나 감정이 잘 드러나도록 풍부하게 묘사하세요.\n"
-        "2. 입력되지 않은 제3의 인물을 절대 창조하거나 언급하지 마세요.\n"
-        "3. 사용자가 입력한 상황 설정을 바탕으로 이야기를 구체화하되, 내용을 왜곡하지 마세요.\n"
-        "4. 문체는 소설처럼 몰입감 있게 서술하고, 한국어로 작성하세요.\n"
-        "5. 마지막 문장은 두 사람이 대화를 시작하기 직전의 긴장감 있는 상황 묘사로 끝내세요."
+        "3. 입력되지 않은 제3의 인물을 절대 창조하거나 언급하지 마세요.\n"
+        "4. 사용자가 입력한 상황 설정을 바탕으로 이야기를 구체화하되, 내용을 왜곡하지 마세요.\n"
+        "5. 문체는 소설처럼 몰입감 있게 서술하고, 한국어로 작성하세요.\n"
+        "6. 마지막 문장은 두 사람이 대화를 시작하기 직전의 긴장감 있는 상황 묘사로 끝내세요."
     )
     
     messages = [
@@ -46,10 +58,11 @@ async def generate_story(
     
     try:
         result = await call_llm(messages, temperature=0.8, max_tokens=1000)
+        content = result if isinstance(result, str) else result.get("content", "")
         return {
             "success": True,
             "data": {
-                "story": result["content"]
+                "plot": content
             }
         }
     except Exception as e:
@@ -65,7 +78,7 @@ async def generate_story(
         return {
             "success": True,
             "data": {
-                "story": mock_story
+                "plot": mock_story
             }
         }
 
@@ -75,10 +88,15 @@ async def analyze_story_legacy(request: StoryGenerationRequest):
     return await generate_story(request)
 
 class CharacterGenerationRequest(BaseModel):
+    """캐릭터 생성 요청 모델 - 상세 필드 지원"""
     name: str = Field(..., description="캐릭터 이름")
-    description: str = Field(..., description="캐릭터 기본 설명/배경")
+    category: Optional[str] = Field(None, description="카테고리")
+    source_work: Optional[str] = Field(None, description="작품명 (출처)")
+    description: str = Field("", description="캐릭터 컨셉/설명")
+    worldview: Optional[str] = Field(None, description="세계관")
 
 class CharacterGenerationResponse(BaseModel):
+    """캐릭터 생성 응답 모델"""
     success: bool
     data: Dict[str, Any]
 
@@ -127,6 +145,7 @@ async def generate_character_details(
             "success": True,
             "data": details
         }
+            
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
