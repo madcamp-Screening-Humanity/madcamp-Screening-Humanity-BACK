@@ -79,10 +79,11 @@ class Settings(BaseSettings):
     OLLAMA_API_PATH: str = "/api/chat"  # Ollama API 경로 (리버스 프록시 경로 포함 가능, 예: "/ollama/api/chat")
     OLLAMA_SSL_VERIFY: bool = False  # SSL 인증서 검증 (개발 환경: False, 프로덕션: True)
     
-    # 컨텍스트/슬라이딩 윈도우 (GLM-4.7-Flash 31B, 32K context)
-    CONTEXT_WINDOW_TURNS: int = 40  # 1턴=user+assistant 1쌍, 40턴=80개 메시지 (약 20K 토큰 예상)
-    CONTEXT_MAX_TOKENS: int = 32000  # 32K 모델 한계
-    CONTEXT_TOKEN_THRESHOLD_RATIO: float = 0.8  # 80% (25.6K) 초과 시 요약 트리거
+    # 컨텍스트/슬라이딩 윈도우 (Gemma 3 27B, Ollama n_ctx=4096)
+    # 4k 컨텍스트에서 시스템 프롬프트(~1.5~2k) + 메시지(~1.5k) + 응답 버퍼(~0.5k) 확보
+    CONTEXT_WINDOW_TURNS: int = 3  # 1턴=user+assistant 1쌍, 3턴=6개 메시지 (약 600~900 토큰)
+    CONTEXT_MAX_TOKENS: int = 4000  # 4k 모델 한계
+    CONTEXT_TOKEN_THRESHOLD_RATIO: float = 0.75  # 75% (3000) 초과 시 요약 트리거
     
     # GPT-SoVITS TTS API 설정
     # 엔드포인트: /tts (POST/GET)

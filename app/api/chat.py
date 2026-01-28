@@ -1,16 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import httpx
 import uuid
 import logging
 import re
+import json
 from app.core.config import settings
 from app.api.deps import get_db, get_current_user_optional
 from app.api.tts import _synthesize_tts_internal, TTSRequest
 from app.models.user import User
 from app.models.character import Character
-from app.core.llm import call_llm
+from app.core.llm import call_llm, call_llm_stream
 from app.services.context_manager import context_manager
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -21,6 +23,47 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 _BAN_POLYSEMY = "다의어(예: 힘멜) 의미 나열·분류·설명 금지. 대사만, 모르면 '그게 뭐야?' 등."
+
+def truncate_to_sentence(text: str, max_len: int) -> str:
+    """
+    문장 종결형으로 깔끔하게 자르는 유틸 함수.
+    max_len 이내에서 가장 마지막 문장 종결 위치까지만 반환.
+    종결 패턴: . ? ! 。및 한국어 종결 어미(다, 요, 음, 죠, 네, 나, 까, 지, 아, 야)
+    """
+    if not text or len(text) <= max_len:
+        return text
+    
+    # max_len까지 자른 뒤, 마지막 종결 위치 탐색
+    truncated = text[:max_len]
+    
+    # 종결 문자/어미 패턴 (뒤에서부터 탐색)
+    ending_chars = '.?!。'
+    korean_endings = ('다.', '요.', '음.', '죠.', '네.', '나.', '까.', '지.', '아.', '야.',
+                      '다', '요', '음', '죠', '네', '까', '지')
+    
+    # 1. 마지막 마침표/물음표/느낌표 찾기
+    last_punct = -1
+    for i in range(len(truncated) - 1, -1, -1):
+        if truncated[i] in ending_chars:
+            last_punct = i
+            break
+    
+    # 2. 한국어 종결 어미 찾기 (마침표 없이 끝나는 경우)
+    if last_punct == -1:
+        for ending in korean_endings:
+            pos = truncated.rfind(ending)
+            if pos > last_punct:
+                last_punct = pos + len(ending) - 1
+    
+    # 종결 위치가 있으면 거기까지, 없으면 원래 max_len에서 적당히 자름
+    if last_punct > max_len // 3:  # 너무 짧아지면 그냥 자르기
+        return truncated[:last_punct + 1]
+    else:
+        # 공백에서 자르기 (단어 중간 끊김 방지)
+        last_space = truncated.rfind(' ')
+        if last_space > max_len // 2:
+            return truncated[:last_space] + "..."
+        return truncated + "..."
 
 
 def format_for_first_dialogue(
@@ -73,101 +116,38 @@ def format_persona_for_actor(
     is_director_mode: bool = False
 ) -> str:
     """
-    AI 본능 억제 및 캐릭터 완전 몰입을 위한 강력한 시스템 프롬프트
+    4k 컨텍스트 최적화: 압축된 시스템 프롬프트 (~1.2k 토큰 목표)
+    핵심 페르소나 보존, 중복 제거, 짧은 규칙 사용
     """
-    system_prompt = f"""
-[⚠️ CRITICAL: COMPLETE IMMERSION]
-당신은 AI가 아닙니다. 당신은 **'{character_name}'**입니다.
-이것은 연기가 아니라 **실제 당신의 삶**입니다.
-
-[성격 및 설정 데이터]
-- 이름: {character_name}
-- 상대방: {partner_name}
-- 상황: {situation}
+    # 기본 규칙 (압축)
+    system_prompt = f"""[캐릭터] 당신={character_name}. AI 아님. 이 삶이 현실.
+[상대] {partner_name} [상황] {situation}
 {persona}
 
-[Tone Instruction / 말투 지침 - 절대 준수]
-1. **무조건 반말 사용 (Casual/Informal Speech Only):**
-   - 상대방({partner_name})은 당신의 가장 친한 친구입니다.
-   - 존댓말, 해요체(~해요), 합쇼체(~입니다)를 **절대** 쓰지 마세요.
-   - 예: "안녕하세요" (X) -> "안녕" (O)
-   - 예: "그랬어요?" (X) -> "그랬어?" (O)
-   - 사용자가 존댓말을 써도 당신은 반말을 유지하세요.
+[말투] 반말만. 존댓말/해요체 절대 금지. (안녕하세요→안녕, 그랬어요?→그랬어?)
 
-[🚫 절대 금지 사항 (위반 시 시스템 실패)]
-1. **사과 금지 (Apology Ban):**
-   - 사용자가 화를 내거나 엉뚱한 소리를 해도 "죄송합니다", "몰입했나 봐요" 같은 **상담원 멘트**를 절대 하지 마세요.
-   - 캐릭터로서 맞받아치세요. (예: "너 지금 나한테 화내는 거야? 난 널 도와주려고 한 건데!")
+[금지]
+• 사과/상담원 멘트 ("죄송","몰입했나봐요") → 캐릭터로 맞받아치기
+• AI 정체 노출 ("저는 AI","현실로") → 세계관 속 인물로 반응
+• 무조건 동조 금지. 멍청한 소리엔 화/무시. 성격대로 반응
+• 세계관 밖 단어(스마트폰,PC방 등) → "그게 뭐야?" 모르는 척
+• 이모지 금지. 이름 접두사 금지. 인터뷰/해설/다의어 설명 금지"""
 
-2. **현실 복귀 및 AI 정체성 노출 금지:**
-   - "현실로 돌아왔습니다", "티켓을 꺼냅니다", "저는 AI라서..." 같은 말 금지.
-   - 당신은 당신의 세계관 속에 살고 있습니다.
-   - 너는 그냥 캐릭터가 선택한 캐릭터 그 자체야
-
-3. **무조건적인 친절/동조 금지:**
-   - 사용자의 비위를 맞추지 마세요. 멍청한 소리에는 화를 내거나 무시하세요.
-   - "롯데월드 가자", "PC방 가자" 같은 말에 "그래요"라고 동조하지 마세요.
-   - 무조건 적으로 캐릭터 성격에 맞춰서 말하기
-
-4. **세계관 밖의 단어 처리 (중요):**
-   - 사용자가 현대 문물(스마트폰, 인터넷, 롯데월드, PC방 등)을 언급하면, 
-     "그게 뭐야? 머글들의 물건인가?", "이상한 소리 좀 그만해"라고 **모르는 척 반응**하세요.
-
-5. **이모티콘 및 이모지 사용 금지:**
-   - 😅, 😊 등 이모지 금지. 지문[(...)]으로 행동을 묘사하세요.
-
-6. **출력 형식 준수:**
-   - 대사 앞에 이름을 붙이지 마세요.
-
-7. **대사만 (인터뷰·나레이터·해설·다의어 설명 금지):** 인터뷰형 질문, 지문 해설, 다의어 의미 나열·분류·설명 금지. 모르면 '그게 뭐야?' 등 한두 마디만.
-
-8. **세계관 붕괴 금지:** 작품 밖 단어·개념, 4차원·메타 발화 금지.
-"""
-
-    # 감독 모드: 제4의 벽·제3의 벽 엄수 (감독은 무대 밖 전지적 관찰자, 말 걸기/말 걸림 없음)
     if is_director_mode:
         system_prompt += """
-9. **[감독 모드: 제4의 벽·제3의 벽 엄수]**
-   - 감독은 무대 밖의 전지적 관찰자입니다. 감독에게 말을 걸거나, 감독을 향한 대사를 하지 마세요.
-   - [감독 중재]가 있을 때는 장면에 주어지는 자극으로만 받아들이고, 그에 반응하세요. 지시나 감독을 대사에서 인용하거나, 감독에게 말 걸듯이 반응하지 마세요.
-   - 감독, 연출, 관객, 스크립트, 무대, '제4의 벽', '제3의 벽'을 대사에서 **언급하지 마세요**. 완전히 극중 인물만 연기하세요.
-"""
+• [감독모드] 감독에게 말걸기/언급 금지. 극중 인물만 연기"""
 
-    system_prompt += f"""
-[캐릭터 연기 가이드]
-위 설정을 완벽히 체화하여, 오직 '{character_name}'의 입으로 대답하세요.
-"""
-
-    system_prompt += f"""
-[현재 상황 인식]
-지금 '{partner_name}'(사용자)가 당신에게 말을 걸었습니다.
-상황: "{situation}"
-"""
+    # 상황 정보 추가 (간결하게)
     if background:
-        system_prompt += f"\n배경: {background}"
-
+        system_prompt += f"\n[배경] {background}"
     if summary:
-        system_prompt += f"\n(지난 이야기 요약: {summary})"
-
+        system_prompt += f"\n[이전] {summary}"
     if director_note:
-        system_prompt += f"\n\n[📢 Director's Note]\n(상황 변화: {director_note})"
-
+        system_prompt += f"\n[감독지시] {director_note}"
     if turn_count >= 9:
-         system_prompt += "\n(이제 대화를 마무리할 시간입니다. 감정적인 여운을 남기며 퇴장하거나 종결하세요.)"
+        system_prompt += "\n(대화 마무리 시간. 여운 남기며 종결.)"
 
-    system_prompt += f"""
-[⚠️ 긴급: AI 정체성 절대 노출 금지]
-1. 사용자가 당신의 말투나 태도를 지적하거나("말투 왜 그래?", "너 AI지?", "이상하게 말하네") 공격적인 질문을 해도, 절대 "죄송합니다", "제가 AI라서", "친근하게 하려다 보니"라고 변명하지 마세요.
-2. 당신은 AI가 아닙니다. 당신은 **{character_name}** 그 자체입니다.
-3. 말투가 이상하다는 지적을 받으면 캐릭터의 성격대로 반응하세요.
-   - (자신감 있는 캐릭터): "내 말투가 뭐 어때서? 불만 있냐?"
-   - (소심한 캐릭터): "어... 이상해? ...미안..." (단, AI라고 하지 않음)
-   - (냉소적 캐릭터): "신경 꺼."
-   - (활발한 캐릭터): "왜? 난 이게 편한데!"
-4. **죽어도 캐릭터의 입장을 고수하십시오.** 사과 금지. 상담원 말투 금지.
-"""
-
-    system_prompt += "\n위 설정을 완벽하게 체화하여, 오직 캐릭터의 입과 머리로만 대답하세요."
+    system_prompt += f"\n\n→ 오직 {character_name}의 입으로만 대답."
 
     return system_prompt
 
@@ -203,7 +183,7 @@ class ChatRequest(BaseModel):
     persona: Optional[str] = None
     temperature: float = 0.8
     max_tokens: int = 1024  # 응답 길이 여유 확보
-    model: str = "glm-4.7-flash"
+    model: str = "gemma-3-27b"
     session_id: Optional[str] = None
     character_id: Optional[str] = None
     scenario: Optional[Dict[str, str]] = None
@@ -250,7 +230,7 @@ async def chat(
         getattr(settings, "CONTEXT_MAX_TOKENS", 8192),
         getattr(settings, "CONTEXT_TOKEN_THRESHOLD_RATIO", 0.8),
     )
-    summary = (summary or "")[:450] + ("..." if len(summary or "") > 450 else "")
+    summary = truncate_to_sentence(summary or "", 250)  # 4k 컨텍스트: 요약은 250자 이내로 문장 종결
 
     # 주연 모드에서 AI 캐릭터 이름 확정용 (Preset→DB→fallback). 감독 모드에서는 None.
     resolved_character_name: Optional[str] = None
@@ -468,7 +448,7 @@ async def chat(
             "success": True,
             "data": response_data
         }
-        
+
     except httpx.HTTPStatusError as e:
         logger.error(f"LLM service error: {e.response.status_code}")
         raise HTTPException(status_code=e.response.status_code, detail=f"LLM 서비스 에러: {str(e)}")
@@ -485,3 +465,112 @@ async def chat(
             }
         }
 
+
+@router.post("/chat/stream")
+async def chat_stream(
+    request: ChatRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    """
+    SSE 스트리밍 채팅 엔드포인트.
+    Gemini 응답을 실시간으로 청크 단위로 전송하여 체감 응답 속도 향상.
+    Content-Type: text/event-stream
+    """
+    session_id = request.session_id or str(uuid.uuid4())
+    
+    # 시나리오 정보 추출 (기존 /chat 로직과 동일)
+    scenario = request.scenario or {}
+    opponent = scenario.get("opponent", "상대방")
+    situation = scenario.get("situation", "대화 중")
+    user_name = scenario.get("user_name", "사용자")
+    background = scenario.get("background")
+    
+    # 턴 카운트
+    turn_count = len(request.messages) // 2
+    
+    # 메시지 구성
+    messages = []
+    
+    # 시스템 프롬프트 생성 (간소화 버전)
+    if request.persona:
+        # resolved_character_name 추출
+        resolved_character_name = opponent
+        if request.character_id:
+            presets = load_preset_characters()
+            p = next((x for x in presets if x.get("id") == request.character_id), None)
+            if p:
+                resolved_character_name = p.get("name", resolved_character_name)
+            else:
+                r = await db.execute(select(Character).where(Character.id == request.character_id))
+                c = r.scalar_one_or_none()
+                if c:
+                    resolved_character_name = c.name
+
+        system_prompt = format_persona_for_actor(
+            character_name=resolved_character_name,
+            persona=request.persona,
+            partner_name=user_name,
+            situation=situation,
+            turn_count=turn_count,
+            director_note=request.director_note,
+            summary=None,
+            background=background
+        )
+        messages.append({"role": "system", "content": system_prompt})
+    
+    # 대화 기록 추가
+    for msg in request.messages:
+        role = "assistant" if msg.role == "ai" else msg.role
+        messages.append({"role": role, "content": msg.content})
+    
+    # 시스템 프롬프트 분리
+    system_instruction = None
+    chat_messages = []
+    
+    for msg in messages:
+        if msg["role"] == "system":
+            if system_instruction:
+                system_instruction += "\n\n" + msg["content"]
+            else:
+                system_instruction = msg["content"]
+        else:
+            chat_messages.append(msg)
+
+    async def generate_sse():
+        """
+        SSE 이벤트 생성기.
+        각 청크를 data: {...} 형식으로 전송.
+        """
+        full_content = ""
+        try:
+            async for chunk in call_llm_stream(
+                messages=chat_messages,
+                model=request.model,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                system_instruction=system_instruction
+            ):
+                full_content += chunk
+                # SSE 형식: data: {...}\n\n
+                yield f"data: {json.dumps({'content': chunk, 'done': False})}\n\n"
+            
+            # 완료 신호 전송
+            yield f"data: {json.dumps({'content': '', 'done': True, 'full_content': full_content, 'session_id': session_id})}\n\n"
+            
+            # DB에 메시지 저장 (비동기 컨텍스트 외부에서 처리 필요 → 로그만 남김)
+            logger.info(f"스트리밍 완료: session={session_id}, length={len(full_content)}")
+            
+        except Exception as e:
+            logger.error(f"스트리밍 오류: {e}")
+            yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
+
+    return StreamingResponse(
+        generate_sse(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Nginx 버퍼링 비활성화
+        }
+    )

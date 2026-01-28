@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from sqlalchemy import text
@@ -8,12 +9,16 @@ from app.core.redis import init_redis_pool, close_redis_pool
 from app.api import auth, users, generate
 from contextlib import asynccontextmanager
 import logging
+import os
 
 # Lifecycle for DB creation
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     await init_redis_pool()
+    
+    # Ensure USER_ASSETS_DIR exists
+    os.makedirs(settings.USER_ASSETS_DIR, exist_ok=True)
     
     async with engine.begin() as conn:
         # Create tables
@@ -64,6 +69,10 @@ app.add_middleware(
 )
 
 logger.info("CORS 설정: 모든 origin 허용 (개발 환경)")
+
+# Static Files Mount
+# /assets 경로로 접근 시 USER_ASSETS_DIR의 파일을 서빙
+app.mount("/assets", StaticFiles(directory=settings.USER_ASSETS_DIR), name="assets")
 
 # Routers
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["auth"])

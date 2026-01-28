@@ -150,7 +150,12 @@ async def list_preset_characters():
 async def list_user_characters(
     db: AsyncSession = Depends(get_db)
 ):
-    """개발 환경: 인증 없이 캐릭터 목록 조회"""
+    """
+    [DEVELOPMENT ONLY] 개발 환경: 인증 없이 캐릭터 목록 조회 (dev-user)
+    
+    WARNING: 이 엔드포인트는 개발 및 디버깅 목적으로만 사용해야 합니다.
+    실제 서비스에서는 보안을 위해 비활성화하거나 제거해야 합니다.
+    """
     try:
         # 개발 환경: dev-user의 캐릭터만 조회
         result = await db.execute(
@@ -195,7 +200,12 @@ async def create_character(
     character: CharacterCreate,
     db: AsyncSession = Depends(get_db)
 ):
-    """개발 환경용: 인증 없이 캐릭터 생성 (임시 user_id 사용)"""
+    """
+    [DEVELOPMENT ONLY] 개발 환경용: 인증 없이 캐릭터 생성 (임시 user_id="dev-user" 사용)
+
+    WARNING: 이 엔드포인트는 개발 및 디버깅 목적으로만 사용해야 합니다.
+    실제 서비스에서는 보안을 위해 비활성화하거나 제거해야 합니다.
+    """
     try:
         tags_json = json.dumps(character.tags) if character.tags else None
         

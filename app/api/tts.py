@@ -1,8 +1,7 @@
 """
 TTS API 엔드포인트
-Redis Queue 및 Stream을 사용하여 Server A의 GPT-SoVITS와 연동합니다.
-Worker가 모델 교체(set_weights) 및 오디오 생성(POST /tts)을 전담하며,
-이곳에서는 작업을 제출(submit_job)하고 결과를 스트리밍(stream_generator)합니다.
+Server A의 GPT-SoVITS API를 직접 호출하여 TTS를 수행합니다.
+가중치 변경은 /tts/prepare 에서 처리하고, 실제 TTS 생성은 /tts 또는 내부 함수에서 수행합니다.
 """
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import StreamingResponse
@@ -12,6 +11,8 @@ import os
 import json
 import hashlib
 import uuid
+import httpx
+import logging
 from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -20,9 +21,57 @@ from app.api.deps import get_db
 from app.models.user import User
 from app.models.audio import AudioFile
 from app.services.audio_analyzer import AudioAnalyzer
-from app.services.tts_queue import submit_tts_job, tts_stream_generator
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+class TTSPrepareRequest(BaseModel):
+    """가중치 로드 요청 모델"""
+    voice_id: str = Field(..., description="음성 ID")
+
+@router.post("/tts/prepare")
+async def prepare_tts_weights(
+    request: TTSPrepareRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    채팅 시작 전 TTS 모델 가중치를 미리 로드합니다.
+    (voice_id에 해당하는 gpt_weights_path, sovits_weights_path를 Server A에 설정)
+    """
+    tts_base_url = settings.TTS_BASE_URL
+    
+    # DB 조회
+    voice_data = await get_voice_from_db(request.voice_id, db)
+    if not voice_data:
+        # DB에 없으면 JSON config 조회 (레거시)
+        ref_path = get_ref_audio_path(request.voice_id)
+        if not ref_path:
+             # 유효하지 않은 voice_id라도 에러보다는 경고 로그만 남기고 성공 처리 (채팅 진행을 막지 않음)
+             logger.warning(f"TTS Prepare: Voice not found for {request.voice_id}")
+             return {"message": "Voice not found, skipped", "success": False}
+        # JSON config엔 가중치 경로 정보가 보통 없으므로 스킵할 수도 있으나, 
+        # 만약 있다면 여기서 처리. 현재 로직상 JSON엔 path 정보 없음 -> 스킵
+        return {"message": "Legacy voice config used (no weights path)", "success": True}
+
+    gpt_weights = voice_data.get("gpt_weights_path")
+    sovits_weights = voice_data.get("sovits_weights_path")
+    
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        if gpt_weights:
+            try:
+                await client.get(f"{tts_base_url}/set_gpt_weights", params={"weights_path": gpt_weights})
+                logger.info(f"Loaded GPT weights for {request.voice_id}")
+            except Exception as e:
+                logger.error(f"Failed to set GPT weights: {e}")
+                
+        if sovits_weights:
+            try:
+                await client.get(f"{tts_base_url}/set_sovits_weights", params={"weights_path": sovits_weights})
+                logger.info(f"Loaded SoVITS weights for {request.voice_id}")
+            except Exception as e:
+                logger.error(f"Failed to set SoVITS weights: {e}")
+                
+    return {"success": True, "message": f"Weights prepared for {request.voice_id}"}
 
 # voice_id 매핑 설정 로드 (레거시)
 _voices_config = None
@@ -177,23 +226,24 @@ async def _synthesize_tts_internal(
                     }
                 }
 
-        # Queue에 작업 제출 (Priority: realtime)
-        # streaming_mode는 요청 값 사용 (Cut strategy 등에 영향)
-        job_id = await submit_tts_job(
-            request_body=request.model_dump_for_gpt_sovits(),
-            gpt_weights_path=request.gpt_weights_path,
-            sovits_weights_path=request.sovits_weights_path,
-            priority="realtime"
-        )
+        # Server A TTS API 직접 호출 (Redis Queue 우회)
+        # 가중치 변경 로직은 /tts/prepare 에서 처리하므로 여기서는 생략
+        tts_base_url = settings.TTS_BASE_URL
         
-        # Redis Stream에서 데이터 수집 (전체 파일 생성 대기)
-        audio_content = b""
-        async for chunk in tts_stream_generator(job_id):
-            audio_content += chunk
+        async with httpx.AsyncClient(timeout=settings.TTS_TIMEOUT) as client:
+            # TTS 요청 (POST /tts)
+            tts_body = request.model_dump_for_gpt_sovits()
+            # logger.info(f"TTS 요청: text={tts_body.get('text')[:30]}...")
+            
+            tts_response = await client.post(
+                f"{tts_base_url}/tts",
+                json=tts_body
+            )
+            tts_response.raise_for_status()
+            audio_content = tts_response.content
             
         if not audio_content:
-            # 타임아웃 또는 빈 결과
-            raise HTTPException(status_code=500, detail="TTS 생성 결과가 비어있습니다. (Timeout or Error)")
+            raise HTTPException(status_code=500, detail="TTS 생성 결과가 비어있습니다.")
 
         # 파일 저장 로직 (기존과 동일)
         file_id = str(uuid.uuid4())
@@ -298,15 +348,19 @@ async def synthesize(request: TTSRequest, db: AsyncSession = Depends(get_db)):
         if not request.ref_audio_path:
             raise ValueError("ref_audio_path required")
 
-        # 작업 우선순위: 스트리밍이면 realtime, 아니면 delayed(일반)
-        priority = "realtime" if request.streaming_mode > 0 else "delayed"
+        # Server A TTS API 직접 호출 (Redis Queue 우회)
+        # 가중치 변경 로직은 /tts/prepare 에서 처리하므로 여기서는 생략하고 바로 TTS 요청
+        tts_base_url = settings.TTS_BASE_URL
         
-        job_id = await submit_tts_job(
-            request_body=request.model_dump_for_gpt_sovits(),
-            gpt_weights_path=request.gpt_weights_path,
-            sovits_weights_path=request.sovits_weights_path,
-            priority=priority
-        )
+        async with httpx.AsyncClient(timeout=settings.TTS_TIMEOUT) as client:
+            # TTS 요청 (POST /tts)
+            tts_body = request.model_dump_for_gpt_sovits()
+            tts_response = await client.post(
+                f"{tts_base_url}/tts",
+                json=tts_body
+            )
+            tts_response.raise_for_status()
+            audio_content = tts_response.content
         
         # 스트리밍 응답 (바이너리 직접 반환)
         if request.return_binary:
@@ -318,17 +372,13 @@ async def synthesize(request: TTSRequest, db: AsyncSession = Depends(get_db)):
             }
             content_type = media_type_map.get(request.media_type, "audio/wav")
             
-            return StreamingResponse(
-                tts_stream_generator(job_id),
+            return Response(
+                content=audio_content,
                 media_type=content_type,
                 headers={"Content-Disposition": f"attachment; filename=tts_output.{request.media_type}"}
             )
         
-        # JSON 응답 (Base64) - 전체 수신 대기
-        audio_content = b""
-        async for chunk in tts_stream_generator(job_id):
-            audio_content += chunk
-            
+        # JSON 응답 (Base64)
         import base64
         audio_base64 = base64.b64encode(audio_content).decode("utf-8")
         

@@ -1,6 +1,6 @@
 import httpx
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, AsyncGenerator
 import google.generativeai as genai
 from app.core.config import settings
 
@@ -123,18 +123,21 @@ async def call_llm(
     if json_mode:
         request_data["format"] = "json"
     
-    # 옵션 설정 (num_ctx 32K 설정)
+    # 속도 최적화 옵션
     request_data["options"] = {
         "temperature": temperature,
-        "num_predict": max_tokens,
-        "num_ctx": 32768  # 32K Context Window
+        "num_predict": min(max_tokens, 256),  # 응답 토큰 제한 (속도 ↑)
+        "num_ctx": 4096,      # 4K 컨텍스트
+        "num_gpu": -1,        # 전체 GPU 레이어 사용
+        "num_thread": 8,      # CPU 스레드 수
     }
+    request_data["keep_alive"] = -1  # 모델 영구 로드 (콜드스타트 방지)
     
     try:
         ssl_verify = getattr(settings, 'OLLAMA_SSL_VERIFY', False)
         
         async with httpx.AsyncClient(
-            timeout=120.0,
+            timeout=300.0,  # 5분 (첫 모델 로드 시 시간 필요)
             verify=ssl_verify
         ) as client:
             response = await client.post(
@@ -161,3 +164,97 @@ async def call_llm(
     except Exception as e:
         logger.error(f"LLM 호출 실패: {e}")
         raise
+
+
+async def call_llm_stream(
+    messages: List[Dict[str, str]],
+    model: Optional[str] = None,
+    temperature: float = 0.7,
+    max_tokens: int = 512,
+    system_instruction: Optional[str] = None
+) -> AsyncGenerator[str, None]:
+    """
+    Gemini 스트리밍 LLM 호출 함수.
+    각 응답 청크를 yield하여 SSE 전송 가능하게 함.
+    Ollama는 스트리밍 미지원 → 전체 응답을 한 번에 yield.
+    """
+    if model is None:
+        model = "gemini-2.5-flash"
+
+    # Gemini 스트리밍 처리
+    if model.startswith("gemini-"):
+        api_key = getattr(settings, "GEMINI_API_KEY", None)
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY가 설정되지 않았습니다.")
+
+        real_model = model
+
+        try:
+            genai.configure(api_key=api_key)
+            
+            # Messages에서 system prompt 추출 및 history 구성
+            chat_history = []
+            
+            if not system_instruction:
+                system_messages = [msg["content"] for msg in messages if msg["role"] == "system"]
+                if system_messages:
+                    system_instruction = "\n".join(system_messages)
+            
+            # User/Assistant 메시지 구성
+            for msg in messages:
+                role = msg["role"]
+                content = msg["content"]
+                if role == "user":
+                    chat_history.append({"role": "user", "parts": [content]})
+                elif role == "assistant":
+                    chat_history.append({"role": "model", "parts": [content]})
+            
+            # Safety Settings (BLOCK_NONE)
+            safety_settings = {
+                genai.types.HarmCategory.HARM_CATEGORY_HARASSMENT: genai.types.HarmBlockThreshold.BLOCK_NONE,
+                genai.types.HarmCategory.HARM_CATEGORY_HATE_SPEECH: genai.types.HarmBlockThreshold.BLOCK_NONE,
+                genai.types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: genai.types.HarmBlockThreshold.BLOCK_NONE,
+                genai.types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: genai.types.HarmBlockThreshold.BLOCK_NONE,
+            }
+
+            # Generation Config
+            generation_config = {
+                "temperature": temperature,
+                "max_output_tokens": max_tokens,
+            }
+
+            # Model 초기화
+            gemini_model = genai.GenerativeModel(
+                model_name=real_model,
+                system_instruction=system_instruction
+            )
+            
+            # 스트리밍 호출 (동기 generate_content + stream=True 사용)
+            # Note: google-generativeai의 비동기 스트리밍은 제한적이므로 동기 스트림 사용
+            response = gemini_model.generate_content(
+                contents=chat_history,
+                generation_config=generation_config,
+                safety_settings=safety_settings,
+                stream=True  # 스트리밍 활성화
+            )
+            
+            # 각 청크를 yield
+            for chunk in response:
+                if chunk.text:
+                    yield chunk.text
+
+        except Exception as e:
+            logger.error(f"Gemini 스트리밍 호출 실패 ({real_model}): {e}")
+            raise
+
+    else:
+        # Ollama: 스트리밍 미지원 → 전체 응답을 한 번에 yield
+        result = await call_llm(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            system_instruction=system_instruction
+        )
+        yield result["content"]
+
