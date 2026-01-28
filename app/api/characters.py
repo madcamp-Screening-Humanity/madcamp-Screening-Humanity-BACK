@@ -642,8 +642,8 @@ async def generate_character_details(
     # 1. Try Gemini
     if settings.GEMINI_API_KEY:
         try:
-            # Gemini-2.5-flash 호출
-            result = await call_llm(messages, model="gemini-2.5-flash", json_mode=True)
+            # Gemini-1.5-flash 호출
+            result = await call_llm(messages, model="gemini-1.5-flash", json_mode=True)
             data = parse_json_response(result["content"])
             return {"success": True, "data": data}
         except Exception as e:
