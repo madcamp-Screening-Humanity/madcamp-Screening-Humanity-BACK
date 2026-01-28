@@ -20,7 +20,7 @@ async def call_llm(
     system_instruction: Gemini 시스템 프롬프트 (messages의 system role보다 우선함)
     """
     if model is None:
-        model = "glm-4.7-flash" # 기본 모델
+        model = "gemini-2.5-flash" # 기본 모델
 
     # Gemini 처리
     if model.startswith("gemini-"):

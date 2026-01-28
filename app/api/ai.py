@@ -71,7 +71,7 @@ async def generate_story(
         "[지침]\n"
         f"1. 반드시 주어진 인물 이름인 '{user_n}'(나/주인공)와 '{char_n}'(상대역)만 사용하세요.\n"
         "2. 전체적인 분위기는 선택한 상황에 맞추되, 인물들 간의 갈등이나 감정이 잘 드러나도록 풍부하게 묘사하세요.\n"
-        "3. 문체는 소설처럼 몰입감 있게 서술하고, 한국어로 작성하세요.\n"
+        "3. 문체는 소설처럼 몰입감 있게 서술하고, 최대 5줄의 한국어로 작성하세요.\n"
         "4. 줄거리의 마지막 문장은 두 사람이 대화를 시작하기 직전의 긴장감 있는 상황 묘사로 끝내세요.\n"
         "5. **JSON 형식을 사용하지 마세요.** 아래 형식을 지켜 줄글로 작성하세요.\n\n"
         "[출력 형식]\n"
@@ -90,8 +90,8 @@ async def generate_story(
         import json as _json
         from app.core.config import settings
         
-        # 시나리오 생성은 무조건 Gemini-3-flash-preview 사용
-        model_to_use = "gemini-3-flash-preview"
+        # 시나리오 생성은 무조건 Gemini-2.5-flash 사용
+        model_to_use = "gemini-2.5-flash"
         
         api_key = getattr(settings, "GEMINI_API_KEY", None)
         if not api_key:
@@ -104,7 +104,7 @@ async def generate_story(
             messages, 
             model=model_to_use, 
             temperature=0.8, 
-            max_tokens=1000,
+            max_tokens=4000,
             json_mode=False
         )
         
@@ -223,7 +223,7 @@ async def generate_character_details(
                 detail="Gemini API Key가 설정되지 않았습니다. .env 파일의 GOOGLE_API_KEY를 확인해주세요."
             )
             
-        model_to_use = "gemini-3-flash-preview"
+        model_to_use = "gemini-2.5-flash-preview"
 
         result = await call_llm(
             messages, 

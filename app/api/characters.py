@@ -624,7 +624,7 @@ async def generate_character_details(
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={settings.GEMINI_API_KEY}",
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={settings.GEMINI_API_KEY}",
                 json={
                     "contents": [{"parts": [{"text": prompt}]}]
                 },

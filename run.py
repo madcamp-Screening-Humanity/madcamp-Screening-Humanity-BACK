@@ -1,8 +1,10 @@
 import uvicorn
 import os
 import shutil
+from dotenv import load_dotenv
 
 if __name__ == "__main__":
+    load_dotenv()
     # Ensure env file exists
     if not os.path.exists(".env"):
         print("Creating .env from .env.example")
