@@ -34,9 +34,9 @@ def _resolve_preset_characters_dir() -> Optional[Path]:
         if p.is_dir():
             return p
         return None
-    # 2) 모노레포 기본: app/api 기준 6단계 상위 = 프로젝트 루트(madcamp03)
+    # 2) 모노레포 기본: app/api 기준 4단계 상위
     try:
-        base = Path(__file__).resolve().parent.parent.parent.parent.parent.parent
+        base = Path(__file__).resolve().parent.parent.parent.parent
         monorepo = base / "madcamp-Screening-Humanity-FRONT" / "public" / "characters"
         if monorepo.is_dir():
             return monorepo
