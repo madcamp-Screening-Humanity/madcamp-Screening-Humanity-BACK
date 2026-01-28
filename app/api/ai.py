@@ -87,8 +87,8 @@ async def generate_story(
         import json as _json
         from app.core.config import settings
         
-        # 시나리오 생성은 무조건 Gemini-1.5-flash 사용
-        model_to_use = "gemini-1.5-flash"
+        # 시나리오 생성은 무조건 Gemini-2.0-flash 사용
+        model_to_use = "gemini-2.0-flash"
         
         api_key = getattr(settings, "GEMINI_API_KEY", None)
         if not api_key:
@@ -99,10 +99,10 @@ async def generate_story(
 
         result = None
         try:
-            # 1차 시도: Gemini 1.5 Flash
+            # 1차 시도: Gemini 2.0 Flash
             result = await call_llm(
                 messages, 
-                model="gemini-1.5-flash", 
+                model="gemini-2.0-flash", 
                 temperature=0.8, 
                 max_tokens=4000,
                 json_mode=False
@@ -262,7 +262,7 @@ async def generate_character_details(
         if not api_key:
             raise ValueError("Gemini API Key missing")
 
-        model_to_use = "gemini-1.5-flash"
+        model_to_use = "gemini-2.0-flash"
         result = await call_llm(
             messages, 
             model=model_to_use, 
