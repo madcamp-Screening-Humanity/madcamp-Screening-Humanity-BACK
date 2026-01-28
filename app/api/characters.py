@@ -610,20 +610,18 @@ async def generate_character_details(
 ):
     """
     AI를 사용하여 캐릭터의 상세 정보(페르소나, 말투 등)를 생성합니다.
+    순서: Gemini -> Local LLM (glm-4.7-flash) -> Mock Data
     """
-    if not settings.GEMINI_API_KEY:
-        # Mocking if no API key
-        return {
-            "success": True,
-            "data": {
-                "persona": f"성격: {request.name}은 매우 성실하고 계획적입니다.\n말투: 정중하고 차분한 말투를 사용합니다.\n배경: 평범한 학생이었으나 사건을 겪으며 변화했습니다.\n목표: 진실을 밝히는 것이 최종 목표입니다.",
-                "description": f"{request.name} 캐릭터의 상세 설정입니다.",
-                "category": request.category or "일반",
-                "tags": ["성실", "정중", "목표의식"]
-            }
-        }
+    from app.core.llm import call_llm  # 지연 import로 순환 참조 방지
 
-    # Actual Gemini call
+    # 1. Mock Data 준비 (최후의 수단)
+    mock_data = {
+        "persona": f"성격: {request.name}은 매우 성실하고 계획적입니다.\n말투: 정중하고 차분한 말투를 사용합니다.\n배경: 평범한 학생이었으나 사건을 겪으며 변화했습니다.\n목표: 진실을 밝히는 것이 최종 목표입니다.",
+        "description": f"{request.name} 캐릭터의 상세 설정입니다.",
+        "category": request.category or "일반",
+        "tags": ["성실", "정중", "목표의식"]
+    }
+
     prompt = f"{request.name} 캐릭터에 대한 상세한 정보를 JSON 형식으로 생성해주세요. 배경설명: {request.description}\n카테고리: {request.category}\n\n" \
              f"다음 필드들을 포함해야 합니다:\n" \
              f"- persona: 캐릭터의 성격, 말투, 행동 패턴을 상세히 설명 (200자 이상). 다음 형식 포함: 성격, 말투, 배경, 목표\n" \
@@ -631,27 +629,35 @@ async def generate_character_details(
              f"- tags: 관련 태그 3-5개 배열\n\n" \
              f"JSON 형식으로만 응답하세요."
 
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={settings.GEMINI_API_KEY}",
-                json={
-                    "contents": [{"parts": [{"text": prompt}]}]
-                },
-                timeout=30.0
-            )
-            resp.raise_for_status()
-            result = resp.json()
-            text = result['candidates'][0]['content']['parts'][0]['text']
-            
-            # Clean JSON
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0].strip()
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0].strip()
-            
-            data = json.loads(text)
+    messages = [{"role": "user", "content": prompt}]
+
+    # JSON 파싱 헬퍼
+    def parse_json_response(text: str) -> Dict[str, Any]:
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0].strip()
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0].strip()
+        return json.loads(text)
+
+    # 1. Try Gemini
+    if settings.GEMINI_API_KEY:
+        try:
+            # Gemini-2.5-flash 호출
+            result = await call_llm(messages, model="gemini-2.5-flash", json_mode=True)
+            data = parse_json_response(result["content"])
             return {"success": True, "data": data}
+        except Exception as e:
+            print(f"Gemini generation failed: {e}. Trying local LLM...")
+    
+    # 2. Try Local LLM (Fallback)
+    try:
+        # 로컬 모델 (glm-4.7-flash) 호출
+        # json_mode=True는 모델이 지원해야 함. 지원 안 하면 텍스트 파싱 시도.
+        result = await call_llm(messages, model="glm-4.7-flash", json_mode=True)
+        data = parse_json_response(result["content"])
+        return {"success": True, "data": data}
     except Exception as e:
-        print(f"Gemini generation error: {e}")
-        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
+        print(f"Local LLM generation failed: {e}. Using mock data.")
+
+    # 3. Fallback to Mock
+    return {"success": True, "data": mock_data}

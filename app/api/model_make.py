@@ -32,11 +32,15 @@ class ModelMakeStartRequest(BaseModel):
     model_name: str = Field(..., min_length=1, description="학습 모델명")
     train_input_dir: str = Field(..., description="업로드 응답의 train_input_dir")
     version: str = Field(default="v2", description="모델 버전 (v2, v2Pro 등)")
+    
+    model_config = {"protected_namespaces": ()}
 
 
 class ModelMakeAbortRequest(BaseModel):
     train_input_dir: str = Field(..., description="업로드 시 받은 train_input_dir (삭제 대상)")
     model_name: Optional[str] = Field(None, description="학습 시작한 모델명 (logs, TEMP 삭제용, 미시작이면 생략)")
+    
+    model_config = {"protected_namespaces": ()}
 
 
 class ModelMakeRegisterRequest(BaseModel):
@@ -46,6 +50,8 @@ class ModelMakeRegisterRequest(BaseModel):
     ref_audio_file: str = Field(..., description="참조용 WAV 파일명 (train_input_dir 내)")
     gpt_weights_path: Optional[str] = Field(None, description="GPT 가중치 경로 (선택)")
     sovits_weights_path: Optional[str] = Field(None, description="SoVITS 가중치 경로 (선택)")
+
+    model_config = {"protected_namespaces": ()}
 
 
 def _get_duration_sec(data: bytes, filename: str) -> Optional[float]:
